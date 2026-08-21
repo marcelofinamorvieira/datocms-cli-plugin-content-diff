@@ -1,0 +1,59 @@
+name: Beta bug report
+description: Report a sanitized content-diff beta problem
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for testing the beta. Never include API tokens, raw content,
+        generated plans, snapshots, state directories, or complete CMA logs.
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      placeholder: 0.1.0-beta.1
+    validations:
+      required: true
+  - type: input
+    id: cli-version
+    attributes:
+      label: DatoCMS CLI and Node.js versions
+      placeholder: datocms 4.0.29, Node.js 20.x
+    validations:
+      required: true
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      options:
+        - Installation
+        - Generation preflight
+        - Plan generation
+        - Migration preflight
+        - Asset staging
+        - Content execution
+        - Verification
+        - Replay or recovery
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Sanitized description
+      description: Describe the behavior using sanitized IDs, counts, phase names, and error codes only.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Sanitized reproduction steps
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Sensitive-data check
+      options:
+        - label: I removed all tokens, raw content, generated plans, snapshots, state files, and complete CMA logs.
+          required: true

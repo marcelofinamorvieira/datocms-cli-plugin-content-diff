@@ -1,0 +1,4 @@
+import type { BuildContentDiffPlanOptions, ContentDiffPlan, ContentSnapshot, PlanSummary } from './types';
+export declare const SAFELY_RELAXABLE_VALIDATOR_KEYS: readonly ["date_range", "date_time_range", "description_length", "enum", "extension", "file_size", "format", "image_aspect_ratio", "image_dimensions", "length", "number_range", "required", "required_alt_title", "required_seo_fields", "sanitized_html", "size", "slug_format", "slug_title_field", "title_length", "unique"];
+export declare function buildContentDiffPlan(sourceInput: ContentSnapshot, targetInput: ContentSnapshot, options: BuildContentDiffPlanOptions): ContentDiffPlan;
+export declare function summarizeContentDiffPlan(plan: Pick<ContentDiffPlan, 'records' | 'uploads' | 'uploadCollections' | 'invalidContent' | 'legacyIdMappings' | 'warnings'>): PlanSummary;

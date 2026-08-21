@@ -1,0 +1,23 @@
+import type { CmaClient } from '@datocms/cli-utils';
+import * as ts from 'typescript';
+export declare function buildFieldsetTitle(fieldset: CmaClient.RawApiTypes.Fieldset): string;
+export declare function buildMenuItemTitle(menuItem: CmaClient.RawApiTypes.MenuItem): string;
+export declare function buildSchemaMenuItemTitle(schemaMenuItem: CmaClient.RawApiTypes.SchemaMenuItem, itemType: CmaClient.RawApiTypes.ItemType | undefined): string;
+export declare function buildWorkflowTitle(workflow: CmaClient.RawApiTypes.Workflow): string;
+export declare function buildPluginTitle(plugin: CmaClient.RawApiTypes.Plugin): string;
+export declare function buildUploadFilterTitle(uploadFilter: CmaClient.RawApiTypes.UploadFilter): string;
+export declare function buildItemTypeFilterTitle(itemTypeFilter: CmaClient.RawApiTypes.ItemTypeFilter): string;
+export declare function buildFieldTitle(field: CmaClient.RawApiTypes.Field): string;
+export declare function buildItemTypeTitle(itemType: CmaClient.RawApiTypes.ItemType): string;
+export declare function debugNode(node: ts.Node, indentation?: number): void;
+export declare function debugCodeAst(code: string): void;
+export declare function parseAstFromCode(code: string): ts.SourceFile;
+export declare function writeCodeFromAst(nodes: ts.NodeArray<ts.Node>): string;
+type ReplaceFn = (path: Array<string | number>, original: unknown) => ts.Expression | undefined;
+type Options = {
+    parentPath?: Array<string | number>;
+    replace?: ReplaceFn;
+};
+export declare function createJsonLiteral(element: unknown, options?: Options): ts.Expression;
+export declare function isBase64Id(id: string): boolean;
+export {};

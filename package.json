@@ -1,0 +1,67 @@
+{
+  "name": "@marcelofinamorvieira/datocms-cli-plugin-content-diff",
+  "version": "0.1.0-beta.1",
+  "description": "Unofficial beta DatoCMS CLI plugin for generating reviewable content migrations between environments",
+  "keywords": ["datocms", "cli", "oclif", "content", "migration", "beta"],
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "author": "Marcelo Finamor Vieira",
+  "homepage": "https://github.com/marcelofinamorvieira/datocms-cli-plugin-content-diff#readme",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "files": ["/bin", "/lib", "/oclif.manifest.json", "/LICENSE", "/README.md"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marcelofinamorvieira/datocms-cli-plugin-content-diff.git"
+  },
+  "scripts": {
+    "build": "rm -rf lib && tsc -b",
+    "check": "biome ci src test",
+    "manifest": "oclif manifest",
+    "prepare": "npm run build && npm run manifest",
+    "release:check": "node scripts/release-check.mjs",
+    "test": "rm -f oclif.manifest.json && mocha --timeout 200000 --require ts-node/register --forbid-only \"test/**/*.test.ts\"",
+    "test:e2e:real-cma": "mocha --timeout 1800000 --require ts-node/register --forbid-only \"test/e2e/**/*.e2e.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:test": "tsc -p test/tsconfig.json --noEmit"
+  },
+  "bugs": {
+    "url": "https://github.com/marcelofinamorvieira/datocms-cli-plugin-content-diff/issues"
+  },
+  "dependencies": {
+    "@datocms/cli-utils": "^4.0.25",
+    "@datocms/cma-schema-types-generator": "^5.4.15",
+    "@datocms/rest-client-utils": "^5.4.9",
+    "@oclif/core": "4.8.0",
+    "lodash": "^4.17.21",
+    "mkdirp": "^1.0.4",
+    "prettier": "^3.4.2",
+    "tslib": "^2.3.1",
+    "tsx": "^4.19.2",
+    "typescript": "5.7.2"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.6.4",
+    "@oclif/test": "^4.1.10",
+    "@types/chai": "^4.3.20",
+    "@types/lodash": "^4.17.20",
+    "@types/mkdirp": "^1.0.2",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.10.2",
+    "chai": "^4.5.0",
+    "datocms": "4.0.29",
+    "mocha": "^10.8.2",
+    "oclif": "^4.22.5",
+    "ts-node": "^10.9.2"
+  },
+  "oclif": {
+    "commands": "./lib/commands",
+    "hooks": {
+      "init": "./lib/hooks/init/check-datocms-version"
+    },
+    "repositoryPrefix": "<%- repo %>/blob/v<%- version %>/<%- commandPath %>"
+  }
+}

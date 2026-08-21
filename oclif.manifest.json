@@ -1,0 +1,495 @@
+{
+  "commands": {
+    "content:diff": {
+      "aliases": [],
+      "args": {
+        "NAME": {
+          "description": "The name to give to the generated migration",
+          "name": "NAME",
+          "required": true
+        }
+      },
+      "description": "Generate a content migration by comparing two DatoCMS environments",
+      "examples": [
+        {
+          "description": "Generate a migration from staging to the primary environment",
+          "command": "<%= config.bin %> <%= command.id %> \"sync staging content\" --autogenerate=staging"
+        },
+        {
+          "description": "Generate a migration from one environment to another",
+          "command": "<%= config.bin %> <%= command.id %> \"sync content\" --autogenerate=source:destination"
+        },
+        {
+          "description": "Include every upload and destructive cleanup",
+          "command": "<%= config.bin %> <%= command.id %> \"mirror content\" --autogenerate=source:destination --uploads=all --include-deletions"
+        },
+        {
+          "description": "Migrate eligible invalid or historical-null content using temporary schema changes",
+          "command": "<%= config.bin %> <%= command.id %> \"sync invalid content\" --autogenerate=source:destination --migrate-invalid-content"
+        }
+      ],
+      "flags": {
+        "json": {
+          "description": "Format output as json.",
+          "helpGroup": "GLOBAL",
+          "name": "json",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "config-file": {
+          "description": "Specify a custom config file path",
+          "env": "DATOCMS_CONFIG_FILE",
+          "helpGroup": "GLOBAL",
+          "name": "config-file",
+          "default": "./datocms.config.json",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "profile": {
+          "description": "Use settings of profile in datocms.config.js",
+          "env": "DATOCMS_PROFILE",
+          "helpGroup": "GLOBAL",
+          "name": "profile",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "api-token": {
+          "description": "Specify a custom API key to access a DatoCMS project",
+          "helpGroup": "GLOBAL",
+          "name": "api-token",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "log-level": {
+          "description": "Level of logging for performed API calls",
+          "helpGroup": "GLOBAL",
+          "name": "log-level",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "options": [
+            "NONE",
+            "BASIC",
+            "BODY",
+            "BODY_AND_HEADERS"
+          ],
+          "type": "option"
+        },
+        "log-mode": {
+          "description": "Where logged output should be written to",
+          "helpGroup": "GLOBAL",
+          "name": "log-mode",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "options": [
+            "stdout",
+            "file",
+            "directory"
+          ],
+          "type": "option"
+        },
+        "base-url": {
+          "hidden": true,
+          "name": "base-url",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "autogenerate": {
+          "description": "Generate a migration from SOURCE to DESTINATION. When DESTINATION is omitted, the primary environment is used (for example, --autogenerate=staging or --autogenerate=staging:production)",
+          "name": "autogenerate",
+          "required": true,
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "item-types": {
+          "description": "Item type API keys to include, separated by commas, or \"all\"",
+          "name": "item-types",
+          "default": "all",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "uploads": {
+          "description": "Include uploads referenced by selected content or every upload",
+          "name": "uploads",
+          "default": "referenced",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "options": [
+            "referenced",
+            "all"
+          ],
+          "type": "option"
+        },
+        "include-deletions": {
+          "description": "Include deletion of destination-only records and unused uploads in scope",
+          "name": "include-deletions",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "bundle-assets": {
+          "description": "Download upload binaries beside the generated migration instead of transferring them from source URLs at runtime",
+          "name": "bundle-assets",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "migrate-invalid-content": {
+          "description": "Migrate eligible invalid or historical-null content with exact temporary validator relaxation or create-time field-default suppression; unsupported records are skipped and reported",
+          "name": "migrate-invalid-content",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "ts": {
+          "description": "Force a TypeScript migration",
+          "exclusive": [
+            "js"
+          ],
+          "name": "ts",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "js": {
+          "description": "Force a JavaScript migration",
+          "exclusive": [
+            "ts"
+          ],
+          "name": "js",
+          "allowNo": false,
+          "type": "boolean"
+        }
+      },
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "content:diff",
+      "pluginAlias": "@marcelofinamorvieira/datocms-cli-plugin-content-diff",
+      "pluginName": "@marcelofinamorvieira/datocms-cli-plugin-content-diff",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": true,
+      "isESM": false,
+      "relativePath": [
+        "lib",
+        "commands",
+        "content",
+        "diff.js"
+      ]
+    },
+    "migrations:new": {
+      "aliases": [],
+      "args": {
+        "NAME": {
+          "description": "The name to give to the script",
+          "name": "NAME",
+          "required": true
+        }
+      },
+      "description": "Create a new migration script",
+      "flags": {
+        "json": {
+          "description": "Format output as json.",
+          "helpGroup": "GLOBAL",
+          "name": "json",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "config-file": {
+          "description": "Specify a custom config file path",
+          "env": "DATOCMS_CONFIG_FILE",
+          "helpGroup": "GLOBAL",
+          "name": "config-file",
+          "default": "./datocms.config.json",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "profile": {
+          "description": "Use settings of profile in datocms.config.js",
+          "env": "DATOCMS_PROFILE",
+          "helpGroup": "GLOBAL",
+          "name": "profile",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "api-token": {
+          "description": "Specify a custom API key to access a DatoCMS project",
+          "helpGroup": "GLOBAL",
+          "name": "api-token",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "log-level": {
+          "description": "Level of logging for performed API calls",
+          "helpGroup": "GLOBAL",
+          "name": "log-level",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "options": [
+            "NONE",
+            "BASIC",
+            "BODY",
+            "BODY_AND_HEADERS"
+          ],
+          "type": "option"
+        },
+        "log-mode": {
+          "description": "Where logged output should be written to",
+          "helpGroup": "GLOBAL",
+          "name": "log-mode",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "options": [
+            "stdout",
+            "file",
+            "directory"
+          ],
+          "type": "option"
+        },
+        "base-url": {
+          "hidden": true,
+          "name": "base-url",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "ts": {
+          "description": "Forces the creation of a TypeScript migration file",
+          "exclusive": [
+            "js"
+          ],
+          "name": "ts",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "js": {
+          "description": "Forces the creation of a JavaScript migration file",
+          "exclusive": [
+            "ts"
+          ],
+          "name": "js",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "template": {
+          "description": "Start the migration script from a custom template",
+          "exclusive": [
+            "autogenerate"
+          ],
+          "name": "template",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "autogenerate": {
+          "description": "Auto-generates script by diffing the schema of two environments\n\nExamples:\n* --autogenerate=foo finds changes made to sandbox environment 'foo' and applies them to primary environment\n* --autogenerate=foo:bar finds changes made to environment 'foo' and applies them to environment 'bar'",
+          "exclusive": [
+            "template"
+          ],
+          "name": "autogenerate",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "schema": {
+          "description": "Include schema definitions for models and blocks (TypeScript only). Use \"all\" for all item types, or specify comma-separated API keys for specific ones",
+          "name": "schema",
+          "required": false,
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        }
+      },
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "migrations:new",
+      "pluginAlias": "@marcelofinamorvieira/datocms-cli-plugin-content-diff",
+      "pluginName": "@marcelofinamorvieira/datocms-cli-plugin-content-diff",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": true,
+      "isESM": false,
+      "relativePath": [
+        "lib",
+        "commands",
+        "migrations",
+        "new.js"
+      ]
+    },
+    "migrations:run": {
+      "aliases": [],
+      "args": {},
+      "description": "Run migration scripts that have not run yet",
+      "flags": {
+        "json": {
+          "description": "Format output as json.",
+          "helpGroup": "GLOBAL",
+          "name": "json",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "config-file": {
+          "description": "Specify a custom config file path",
+          "env": "DATOCMS_CONFIG_FILE",
+          "helpGroup": "GLOBAL",
+          "name": "config-file",
+          "default": "./datocms.config.json",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "profile": {
+          "description": "Use settings of profile in datocms.config.js",
+          "env": "DATOCMS_PROFILE",
+          "helpGroup": "GLOBAL",
+          "name": "profile",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "api-token": {
+          "description": "Specify a custom API key to access a DatoCMS project",
+          "helpGroup": "GLOBAL",
+          "name": "api-token",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "log-level": {
+          "description": "Level of logging for performed API calls",
+          "helpGroup": "GLOBAL",
+          "name": "log-level",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "options": [
+            "NONE",
+            "BASIC",
+            "BODY",
+            "BODY_AND_HEADERS"
+          ],
+          "type": "option"
+        },
+        "log-mode": {
+          "description": "Where logged output should be written to",
+          "helpGroup": "GLOBAL",
+          "name": "log-mode",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "options": [
+            "stdout",
+            "file",
+            "directory"
+          ],
+          "type": "option"
+        },
+        "base-url": {
+          "hidden": true,
+          "name": "base-url",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "source": {
+          "description": "Specify the environment to fork",
+          "name": "source",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "destination": {
+          "description": "Specify the name of the new forked environment",
+          "exclusive": [
+            "in-place"
+          ],
+          "name": "destination",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "in-place": {
+          "description": "Run the migrations in the --source environment, without forking",
+          "exclusive": [
+            "destination"
+          ],
+          "name": "in-place",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "allow-primary": {
+          "dependsOn": [
+            "in-place"
+          ],
+          "description": "Allow running reviewed migrations in-place on the primary environment. There is no rollback if the run fails partway through",
+          "name": "allow-primary",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "dry-run": {
+          "description": "Simulate the execution of the migrations, without making any actual change",
+          "name": "dry-run",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "fast-fork": {
+          "dependsOn": [
+            "destination"
+          ],
+          "description": "Run a fast fork. A fast fork reduces processing time, but it also prevents writing to the source environment during the process",
+          "name": "fast-fork",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "force": {
+          "dependsOn": [
+            "fast-fork"
+          ],
+          "description": "Forces the start of a fast fork, even there are users currently editing records in the environment to copy",
+          "name": "force",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "migrations-dir": {
+          "description": "Directory where script migrations are stored",
+          "name": "migrations-dir",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "migrations-model": {
+          "description": "API key of the DatoCMS model used to store migration data",
+          "name": "migrations-model",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "migrations-tsconfig": {
+          "description": "Path of the tsconfig.json to use to run TS migrations scripts",
+          "name": "migrations-tsconfig",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        }
+      },
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "migrations:run",
+      "pluginAlias": "@marcelofinamorvieira/datocms-cli-plugin-content-diff",
+      "pluginName": "@marcelofinamorvieira/datocms-cli-plugin-content-diff",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": true,
+      "isESM": false,
+      "relativePath": [
+        "lib",
+        "commands",
+        "migrations",
+        "run.js"
+      ]
+    }
+  },
+  "version": "0.1.0-beta.1"
+}

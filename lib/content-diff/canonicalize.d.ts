@@ -1,0 +1,12 @@
+import type { ItemTypeSchemaSnapshot, JsonObject, JsonValue, RecordScheduleSnapshot, RecordSnapshot, RecordVersionSnapshot, SchemaSnapshot, UploadCollectionSnapshot, UploadSnapshot } from './types';
+export declare function canonicalizeJson(value: unknown): JsonValue;
+export declare function stableStringify(value: unknown): string;
+export declare function semanticHash(value: unknown): string;
+export declare function canonicalTimestamp(value: unknown, path: string): string;
+export declare function sortLocalizedObject(value: unknown, localeOrder: readonly string[]): JsonObject;
+export declare function isPortableDatoId(id: string): boolean;
+export declare function canonicalizeRecord(currentInput: unknown, publishedInput: unknown | null, itemType: ItemTypeSchemaSnapshot, schema: SchemaSnapshot, schedules: RecordScheduleSnapshot): RecordSnapshot;
+export declare function canonicalizeRecordVersion(input: unknown, itemType: ItemTypeSchemaSnapshot, schema: SchemaSnapshot): RecordVersionSnapshot;
+export declare function canonicalizeUpload(input: unknown, localeOrder: readonly string[]): UploadSnapshot;
+export declare function canonicalizeUploadCollection(input: unknown): UploadCollectionSnapshot;
+export declare function canonicalizeSchedules(schedules: RecordScheduleSnapshot, localeOrder: readonly string[]): RecordScheduleSnapshot;
