@@ -51,6 +51,35 @@ The dry run lists pending migration files; the generated plan is the detailed
 content preview. Without `--in-place`, `migrations:run` forks the source and
 applies the migration to the new sandbox.
 
+### Use with the primary environment
+
+To compare a sandbox with the current primary environment, omit the destination
+from `--autogenerate`:
+
+```bash
+npx datocms content:diff "sync staging into primary" \
+  --autogenerate=staging
+```
+
+Review the generated files, then apply them to a new fork of primary first:
+
+```bash
+npx datocms migrations:run --destination=content-diff-review --dry-run
+npx datocms migrations:run --destination=content-diff-review
+```
+
+After validating that fork, you can intentionally apply the migration directly
+to primary with both safety opt-ins:
+
+```bash
+npx datocms migrations:run --in-place --allow-primary --dry-run
+npx datocms migrations:run --in-place --allow-primary
+```
+
+Direct primary execution has no automatic rollback and can leave a partially
+migrated environment if execution fails. Prefer promoting a validated fork when
+your project workflow allows it.
+
 Useful optional scopes:
 
 ```bash
