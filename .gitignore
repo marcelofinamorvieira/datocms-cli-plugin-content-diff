@@ -3,7 +3,7 @@ coverage/
 *.tsbuildinfo
 *.tgz
 *.log
-api-calls*
+/api-calls/
 .DS_Store
 test/e2e/.state/
 test/e2e/artifacts/
