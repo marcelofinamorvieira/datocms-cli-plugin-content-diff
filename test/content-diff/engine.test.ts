@@ -24,6 +24,7 @@ import {
   assertNoManagedRelationshipToMappingModel,
   emptyLegacyIdMappingPlan,
   prepareLegacyIdMappings,
+  prettyStableStringify,
   readLegacyIdMappingRegistry,
 } from '../../src/content-diff/legacy-ids';
 import type { LegacyIdMappingRegistry } from '../../src/content-diff/legacy-ids';
@@ -178,6 +179,102 @@ describe('content diff engine', () => {
     }
   });
 
+  it('accepts identical managed schemas across aligned projects', () => {
+    const source = makeSchema('main');
+    source.siteId = 'source-site';
+    const destination = { ...source, siteId: 'destination-site' };
+
+    expect(() => assertSchemasCompatible(source, destination)).not.to.throw();
+
+    const plan = buildContentDiffPlan(
+      makeSnapshot(source, {}),
+      makeSnapshot(destination, {}),
+      { includeDeletions: false, uploads: 'referenced' },
+    );
+
+    expect(plan.source).to.include({
+      siteId: 'source-site',
+      environmentId: 'main',
+    });
+    expect(plan.target).to.include({
+      siteId: 'destination-site',
+      environmentId: 'main',
+    });
+    expect(plan.options.projectMode).to.equal('aligned_projects');
+  });
+
+  it('rejects only an identical project/environment endpoint', () => {
+    const schema = makeSchema('main');
+    const snapshot = makeSnapshot(schema, {});
+
+    expect(() =>
+      buildContentDiffPlan(snapshot, snapshot, {
+        includeDeletions: false,
+        uploads: 'referenced',
+      }),
+    ).to.throw(
+      ContentDiffError,
+      'must identify different project/environment endpoints',
+    );
+
+    const otherEnvironment = makeSchema('staging');
+    expect(
+      buildContentDiffPlan(snapshot, makeSnapshot(otherEnvironment, {}), {
+        includeDeletions: false,
+        uploads: 'referenced',
+      }).options.projectMode,
+    ).to.equal('same_project');
+  });
+
+  it('scopes new and finalized legacy-ID ledger state to the destination project', () => {
+    const sourceSchema = makeSchema('main');
+    sourceSchema.siteId = 'source-site';
+    const destinationSchema = {
+      ...sourceSchema,
+      siteId: 'destination-site',
+    };
+    const alternateDestinationSchema = {
+      ...sourceSchema,
+      siteId: 'alternate-destination-site',
+    };
+    const source = makeSnapshot(sourceSchema, {
+      '100': makeCanonicalRecord(sourceSchema, '100', {
+        title: { en: 'legacy' },
+      }),
+    });
+    const destination = makeSnapshot(destinationSchema, {});
+    const alternateDestination = makeSnapshot(alternateDestinationSchema, {});
+
+    const mappings = prepareLegacyIdMappings(
+      source,
+      destination,
+      emptyMappingRegistry(destination),
+    );
+    const alternateMappings = prepareLegacyIdMappings(
+      source,
+      alternateDestination,
+      emptyMappingRegistry(alternateDestination),
+    );
+    const plan = buildContentDiffPlan(source, destination, {
+      includeDeletions: false,
+      uploads: 'referenced',
+      legacyIdMappings: mappings,
+    });
+
+    expect(mappings.entries[0].targetId).not.to.equal(
+      alternateMappings.entries[0].targetId,
+    );
+    expect(
+      plan.legacyIdMappings.newMappingBatch?.chunks[0].document.projectId,
+    ).to.equal('destination-site');
+    expect(plan.legacyIdMappings.schema.model.id).to.equal(
+      emptyLegacyIdMappingPlan(destination).schema.model.id,
+    );
+    expect(plan.legacyIdMappings.schema.model.id).not.to.equal(
+      emptyLegacyIdMappingPlan(source).schema.model.id,
+    );
+  });
+
   it('treats field default-value drift as an incompatible managed schema', () => {
     const source = makeSchema('source');
     const target = makeSchema('destination');
@@ -270,7 +367,7 @@ describe('content diff engine', () => {
     );
   });
 
-  it('validates the exact live reserved-model defaults before trusting its ledger', async () => {
+  it('validates reserved-model defaults and rejects a foreign-project ledger', async () => {
     const schema = addExactMappingModel(makeSchema('source'));
     const model = schema.itemTypes.find(
       ({ apiKey }) => apiKey === DEFAULT_CONTENT_DIFF_MODEL_API_KEY,
@@ -278,6 +375,8 @@ describe('content diff engine', () => {
     const nameField = model.fields.find(({ apiKey }) => apiKey === 'name')!;
     let collectionAppearance = 'table';
     let nameHeading = false;
+    let mappingName = 'legacy-id-map:test:1/1';
+    let mappingValue = '{}';
     const mappingRecordMeta = {
       status: 'published',
       is_valid: true,
@@ -350,8 +449,8 @@ describe('content diff engine', () => {
         listPagedIterator: async function* () {
           yield {
             id: RECORD_A,
-            name: 'legacy-id-map:test:1/1',
-            mapping: '{}',
+            name: mappingName,
+            mapping: mappingValue,
             meta: mappingRecordMeta,
           };
         },
@@ -409,6 +508,34 @@ describe('content diff engine', () => {
     expect(shapeError).to.be.instanceOf(ContentDiffError);
     expect((shapeError as ContentDiffError).message).to.include(
       'must remain a valid, unscheduled, workflow-free draft',
+    );
+
+    mappingRecordMeta.status = 'draft';
+    const entries = [
+      { entityType: 'record' as const, sourceId: '100', targetId: RECORD_C },
+    ];
+    const wholeHash = semanticHash(entries);
+    mappingName = `legacy-id-map:${RECORD_B}:1/1`;
+    mappingValue = prettyStableStringify({
+      formatVersion: 1,
+      projectId: 'foreign-site',
+      batchId: RECORD_B,
+      chunkIndex: 0,
+      chunkCount: 1,
+      wholeHash,
+      entries,
+    });
+    shapeError = undefined;
+
+    try {
+      await readLegacyIdMappingRegistry(rawClient as never, schema);
+    } catch (error) {
+      shapeError = error;
+    }
+
+    expect(shapeError).to.be.instanceOf(ContentDiffError);
+    expect((shapeError as ContentDiffError).message).to.include(
+      'invalid ledger metadata',
     );
   });
 

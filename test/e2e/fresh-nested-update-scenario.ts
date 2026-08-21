@@ -169,9 +169,9 @@ export const freshNestedUpdateGateScenario: RealCmaScenario<
       object(value),
     );
 
-    assert.equal(envelope.formatVersion, 9);
-    assert.equal(envelope.runtimeVersion, '15');
-    assert.equal(plan.formatVersion, 9);
+    assert.equal(envelope.formatVersion, 10);
+    assert.equal(envelope.runtimeVersion, '16');
+    assert.equal(plan.formatVersion, 10);
     assert.deepEqual(array(plan.records), []);
     assert.equal(skipped.length, 1);
     assert.equal(skipped[0].id, seed.recordId);

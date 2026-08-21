@@ -13,6 +13,114 @@ import type { DeleteReleaseStep } from '../../src/content-diff';
 import { ContentDiffError } from '../../src/content-diff';
 
 describe('content diff orchestration', () => {
+  it('uses each project root client for its own permission proof', async () => {
+    let sourcePermissionChecks = 0;
+    let destinationPermissionChecks = 0;
+    let contentReads = 0;
+    const schemaClient = (siteId: string) =>
+      ({
+        site: {
+          find: async () => ({
+            id: siteId,
+            locales: ['en'],
+            timezone: 'UTC',
+            meta: {
+              improved_timezone_management: true,
+              improved_boolean_fields: true,
+              improved_validation_at_publishing: true,
+              milliseconds_in_datetime: true,
+              non_localized_focal_points: true,
+              improved_hex_management: true,
+            },
+          }),
+        },
+        itemTypes: {
+          list: async () => [
+            {
+              id: 'article-model',
+              name: 'Article',
+              api_key: 'article',
+              modular_block: false,
+              singleton: false,
+              sortable: false,
+              tree: false,
+              draft_mode_active: true,
+              draft_saving_active: false,
+              all_locales_required: false,
+              workflow: null,
+            },
+          ],
+        },
+        fields: {
+          list: async () => [
+            {
+              id: 'title-field',
+              api_key: 'title',
+              field_type: 'string',
+              localized: false,
+              position: 1,
+              default_value: null,
+              validators: {},
+            },
+          ],
+        },
+        workflows: { list: async () => [] },
+        items: {
+          listPagedIterator: () => {
+            contentReads += 1;
+            throw new Error('Content must not be read without both proofs');
+          },
+        },
+      }) as any;
+
+    try {
+      await generateContentDiffMigration({
+        source: {
+          rootClient: {
+            users: {
+              findMe: async () => {
+                sourcePermissionChecks += 1;
+                return { type: 'account' };
+              },
+            },
+          } as any,
+          environmentClient: schemaClient('source-site'),
+          environmentId: 'main',
+        },
+        destination: {
+          rootClient: {
+            users: {
+              findMe: async () => {
+                destinationPermissionChecks += 1;
+                return undefined;
+              },
+            },
+          } as any,
+          environmentClient: schemaClient('destination-site'),
+          environmentId: 'main',
+        },
+        migrationFilePath: '/not-created.js',
+        format: 'js',
+        options: {
+          itemTypes: 'all',
+          uploads: 'referenced',
+          includeDeletions: false,
+          bundleAssets: false,
+          migrateInvalidContent: false,
+        },
+      });
+    } catch (error) {
+      expect(error).to.be.instanceOf(ContentDiffError);
+      expect((error as ContentDiffError).code).to.equal('UNPROVEN_FULL_ACCESS');
+      expect(sourcePermissionChecks).to.equal(1);
+      expect(destinationPermissionChecks).to.equal(1);
+      expect(contentReads).to.equal(0);
+      return;
+    }
+
+    throw new Error('Expected the destination permission proof to fail');
+  });
+
   it('stops on managed schema drift before content reads or artifact creation', async () => {
     const temporaryDirectory = await mkdtemp(
       join(tmpdir(), 'datocms-content-schema-gate-'),
@@ -20,11 +128,14 @@ describe('content diff orchestration', () => {
     const migrationFilePath = join(temporaryDirectory, '1700000000_sync.js');
     let contentReads = 0;
 
-    const schemaClient = (validators: Record<string, unknown>) =>
+    const schemaClient = (
+      siteId: string,
+      validators: Record<string, unknown>,
+    ) =>
       ({
         site: {
           find: async () => ({
-            id: 'site-id',
+            id: siteId,
             locales: ['en'],
             timezone: 'UTC',
             meta: {
@@ -81,17 +192,22 @@ describe('content diff orchestration', () => {
       }) as any;
 
     const clients = {
-      source: schemaClient({}),
-      destination: schemaClient({ required: {} }),
+      source: schemaClient('source-site', {}),
+      destination: schemaClient('destination-site', { required: {} }),
     };
 
     try {
       await generateContentDiffMigration({
-        client: {} as any,
-        buildClientForEnvironment: async (environmentId) =>
-          clients[environmentId as keyof typeof clients],
-        sourceEnvironmentId: 'source',
-        destinationEnvironmentId: 'destination',
+        source: {
+          rootClient: {} as any,
+          environmentClient: clients.source,
+          environmentId: 'main',
+        },
+        destination: {
+          rootClient: {} as any,
+          environmentClient: clients.destination,
+          environmentId: 'main',
+        },
         migrationFilePath,
         format: 'js',
         options: {
@@ -193,11 +309,16 @@ describe('content diff orchestration', () => {
 
     try {
       await generateContentDiffMigration({
-        client: {} as any,
-        buildClientForEnvironment: async (environmentId) =>
-          clients[environmentId as keyof typeof clients],
-        sourceEnvironmentId: 'source',
-        destinationEnvironmentId: 'destination',
+        source: {
+          rootClient: {} as any,
+          environmentClient: clients.source,
+          environmentId: 'source',
+        },
+        destination: {
+          rootClient: {} as any,
+          environmentClient: clients.destination,
+          environmentId: 'destination',
+        },
         migrationFilePath,
         format: 'js',
         options: {

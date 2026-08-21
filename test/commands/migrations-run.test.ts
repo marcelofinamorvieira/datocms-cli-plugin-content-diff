@@ -1,9 +1,11 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CmaClient, CmaClientCommand } from '@datocms/cli-utils';
 import { runCommand } from '@oclif/test';
 import { expect } from 'chai';
+import { stableStringify } from '../../src/content-diff/canonicalize';
 
 type BuildClient = (options?: { environment?: string }) => Promise<
   Record<string, unknown>
@@ -54,6 +56,73 @@ function apiError(status: number, statusText: string): CmaClient.ApiError {
   });
 }
 
+async function writeBoundContentMigration(
+  migrationsDirectory: string,
+  options: {
+    projectMode?: 'same_project' | 'aligned_projects';
+    sourceSiteId?: string;
+    targetSiteId?: string;
+  } = {},
+): Promise<{ migrationPath: string; manifestPath: string }> {
+  const migrationBasename = '1700000100_bound';
+  const manifestBasename = `${migrationBasename}.plan.json`;
+  const migrationPath = join(migrationsDirectory, `${migrationBasename}.js`);
+  const contentDirectory = join(migrationsDirectory, '.datocms-content');
+  const manifestPath = join(contentDirectory, manifestBasename);
+  const sourceSiteId = options.sourceSiteId ?? 'source-site';
+  const targetSiteId = options.targetSiteId ?? 'target-site';
+  const plan = {
+    formatVersion: 10,
+    source: {
+      siteId: sourceSiteId,
+      environmentId: 'main',
+    },
+    target: {
+      siteId: targetSiteId,
+      environmentId: 'main',
+    },
+    schema: { siteId: sourceSiteId },
+    options: {
+      projectMode: options.projectMode ?? 'aligned_projects',
+    },
+  };
+  const manifest = {
+    formatVersion: 10,
+    runtimeVersion: '16',
+    integrity: {
+      algorithm: 'sha256',
+      planSha256: createHash('sha256')
+        .update(stableStringify(plan))
+        .digest('hex'),
+    },
+    plan,
+  };
+  const manifestContents = `${JSON.stringify(manifest, null, 2)}\n`;
+  const manifestSha256 = createHash('sha256')
+    .update(manifestContents)
+    .digest('hex');
+  const binding = {
+    bindingVersion: 1,
+    targetSiteId,
+    manifestBasename,
+    manifestSha256,
+  };
+
+  await mkdir(contentDirectory);
+  await writeFile(manifestPath, manifestContents);
+  await writeFile(
+    migrationPath,
+    `// datocms-content-diff-binding ${JSON.stringify(binding)}
+// .datocms-content/runtime-v16
+module.exports = async function () {
+  globalThis.__migrationInvocations = (globalThis.__migrationInvocations || 0) + 1;
+};
+`,
+  );
+
+  return { migrationPath, manifestPath };
+}
+
 describe('migrations:run execution context', () => {
   let temporaryDirectory: string;
   let migrationsDirectory: string;
@@ -63,6 +132,7 @@ describe('migrations:run execution context', () => {
   let builtEnvironmentIds: Array<string | undefined>;
   let forkCalls: Array<{ sourceId: string; destinationId: string }>;
   let migrationRecordWrites: number;
+  let actualSiteId: string;
 
   beforeEach(async () => {
     temporaryDirectory = await mkdtemp(
@@ -73,6 +143,7 @@ describe('migrations:run execution context', () => {
     builtEnvironmentIds = [];
     forkCalls = [];
     migrationRecordWrites = 0;
+    actualSiteId = 'target-site';
 
     await writeFile(
       configPath,
@@ -92,6 +163,9 @@ describe('migrations:run execution context', () => {
       { id: 'sandbox', meta: { primary: false } },
     ];
     const rootClient = {
+      site: {
+        find: async () => ({ id: actualSiteId }),
+      },
       environments: {
         list: async () => environments,
         find: async (id: string) =>
@@ -156,7 +230,11 @@ describe('migrations:run execution context', () => {
     expect(forkCalls).to.deep.equal([
       { sourceId: 'source', destinationId: 'generated-fork' },
     ]);
-    expect(builtEnvironmentIds).to.deep.equal([undefined, 'generated-fork']);
+    expect(builtEnvironmentIds).to.deep.equal([
+      undefined,
+      'source',
+      'generated-fork',
+    ]);
     expect(
       (globalThis as Record<string, unknown>).__oneArgumentMigrationClient,
     ).to.equal('target-client');
@@ -195,6 +273,183 @@ describe('migrations:run execution context', () => {
       contentDiffProtocolVersion: 1,
     });
     expect(stderr).to.contain('no automatic rollback');
+  });
+
+  it('validates and runs a destination-bound content migration', async () => {
+    await writeBoundContentMigration(migrationsDirectory);
+
+    const { error } = await runCommand(
+      `migrations:run --source=source --destination=generated-fork --config-file=${configPath}`,
+    );
+
+    expect(error).to.equal(undefined);
+    expect(forkCalls).to.deep.equal([
+      { sourceId: 'source', destinationId: 'generated-fork' },
+    ]);
+    expect(
+      (globalThis as Record<string, unknown>).__migrationInvocations,
+    ).to.equal(1);
+    expect(migrationRecordWrites).to.equal(1);
+  });
+
+  it('rejects a destination binding for another profile before any mutation', async () => {
+    await writeBoundContentMigration(migrationsDirectory);
+    actualSiteId = 'wrong-site';
+    let migrationModelCreates = 0;
+    targetClient.itemTypes = {
+      find: async () => {
+        throw apiError(404, 'Not Found');
+      },
+      create: async () => {
+        migrationModelCreates += 1;
+        return exactMigrationModel();
+      },
+    };
+
+    const { error } = await runCommand(
+      `migrations:run --source=source --destination=generated-fork --config-file=${configPath}`,
+    );
+
+    expect(error?.message).to.contain('active profile targets "wrong-site"');
+    expect(forkCalls).to.deep.equal([]);
+    expect(migrationModelCreates).to.equal(0);
+    expect(migrationRecordWrites).to.equal(0);
+    expect(
+      (globalThis as Record<string, unknown>).__migrationInvocations,
+    ).to.equal(undefined);
+  });
+
+  it('rejects a tampered manifest before creating a fork or tracking record', async () => {
+    const { manifestPath } =
+      await writeBoundContentMigration(migrationsDirectory);
+    await writeFile(manifestPath, '{"tampered":true}\n');
+
+    const { error } = await runCommand(
+      `migrations:run --source=source --destination=generated-fork --config-file=${configPath}`,
+    );
+
+    expect(error?.message).to.contain('manifest integrity validation failed');
+    expect(forkCalls).to.deep.equal([]);
+    expect(migrationRecordWrites).to.equal(0);
+  });
+
+  it('rejects a manifest path binding that does not match the migration filename', async () => {
+    const { migrationPath } =
+      await writeBoundContentMigration(migrationsDirectory);
+    const source = await readFile(migrationPath, 'utf8');
+    await writeFile(
+      migrationPath,
+      source.replace(
+        '1700000100_bound.plan.json',
+        '1700000100_other.plan.json',
+      ),
+    );
+
+    const { error } = await runCommand(
+      `migrations:run --source=source --destination=generated-fork --config-file=${configPath}`,
+    );
+
+    expect(error?.message).to.contain('instead of');
+    expect(forkCalls).to.deep.equal([]);
+    expect(migrationRecordWrites).to.equal(0);
+  });
+
+  it('rejects a runtime-v16 wrapper whose static binding was removed', async () => {
+    const { migrationPath } =
+      await writeBoundContentMigration(migrationsDirectory);
+    const source = await readFile(migrationPath, 'utf8');
+    await writeFile(
+      migrationPath,
+      source
+        .split(/\r?\n/u)
+        .filter((line) => !line.startsWith('// datocms-content-diff-binding '))
+        .join('\n'),
+    );
+
+    const { error } = await runCommand(
+      `migrations:run --source=source --destination=generated-fork --config-file=${configPath}`,
+    );
+
+    expect(error?.message).to.contain(
+      'missing its required static destination binding',
+    );
+    expect(forkCalls).to.deep.equal([]);
+    expect(migrationRecordWrites).to.equal(0);
+  });
+
+  it('rejects a static target-site binding that was changed independently of its manifest', async () => {
+    const { migrationPath } =
+      await writeBoundContentMigration(migrationsDirectory);
+    const source = await readFile(migrationPath, 'utf8');
+    await writeFile(
+      migrationPath,
+      source.replace(
+        '"targetSiteId":"target-site"',
+        '"targetSiteId":"other-site"',
+      ),
+    );
+
+    const { error } = await runCommand(
+      `migrations:run --source=source --destination=generated-fork --config-file=${configPath}`,
+    );
+
+    expect(error?.message).to.contain(
+      'static destination binding does not match the manifest target site',
+    );
+    expect(forkCalls).to.deep.equal([]);
+    expect(migrationRecordWrites).to.equal(0);
+  });
+
+  it('rejects inconsistent project-mode metadata before any mutation', async () => {
+    await writeBoundContentMigration(migrationsDirectory, {
+      projectMode: 'same_project',
+      sourceSiteId: 'source-site',
+      targetSiteId: 'target-site',
+    });
+
+    const { error } = await runCommand(
+      `migrations:run --source=source --destination=generated-fork --config-file=${configPath}`,
+    );
+
+    expect(error?.message).to.contain(
+      'inconsistent project-mode or endpoint metadata',
+    );
+    expect(forkCalls).to.deep.equal([]);
+    expect(migrationRecordWrites).to.equal(0);
+  });
+
+  it('validates destination bindings during dry runs without mutating or invoking scripts', async () => {
+    await writeBoundContentMigration(migrationsDirectory);
+
+    const { error } = await runCommand(
+      `migrations:run --source=source --destination=generated-fork --dry-run --config-file=${configPath}`,
+    );
+
+    expect(error).to.equal(undefined);
+    expect(forkCalls).to.deep.equal([]);
+    expect(migrationRecordWrites).to.equal(0);
+    expect(
+      (globalThis as Record<string, unknown>).__migrationInvocations,
+    ).to.equal(undefined);
+  });
+
+  it('keeps unbound runtime-v15 content migrations runnable', async () => {
+    await writeFile(
+      join(migrationsDirectory, '1700000100_legacyContentDiff.js'),
+      `// .datocms-content/runtime-v15\nmodule.exports = async function () {
+        globalThis.__migrationInvocations = (globalThis.__migrationInvocations || 0) + 1;
+      };`,
+    );
+
+    const { error } = await runCommand(
+      `migrations:run --source=sandbox --in-place --config-file=${configPath}`,
+    );
+
+    expect(error).to.equal(undefined);
+    expect(
+      (globalThis as Record<string, unknown>).__migrationInvocations,
+    ).to.equal(1);
+    expect(migrationRecordWrites).to.equal(1);
   });
 
   it('retains the primary guard and does not invoke a migration without --allow-primary', async () => {

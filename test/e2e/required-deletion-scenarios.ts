@@ -237,9 +237,9 @@ function buildScenario(mode: Mode): RealCmaScenario<Seed, Expected> {
       const skipped = array(invalid.skippedRecords).map(object);
       const relaxations = array(invalid.validatorRelaxations).map(object);
 
-      assert.equal(envelope.formatVersion, 9);
-      assert.equal(envelope.runtimeVersion, '15');
-      assert.equal(plan.formatVersion, 9);
+      assert.equal(envelope.formatVersion, 10);
+      assert.equal(envelope.runtimeVersion, '16');
+      assert.equal(plan.formatVersion, 10);
 
       assert.deepEqual(array(invalid.detectedRecordIds).map(String).sort(), [
         ...expected.recordIds,

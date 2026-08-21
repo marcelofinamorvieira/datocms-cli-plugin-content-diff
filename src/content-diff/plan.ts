@@ -37,7 +37,11 @@ import {
   emptyLegacyIdMappingPlan,
   finalizeLegacyIdMappingPlan,
 } from './legacy-ids';
-import { assertSchemasCompatible, computeSchemaDigest } from './schema';
+import {
+  assertDistinctEndpoints,
+  assertSchemasCompatible,
+  computeSchemaDigest,
+} from './schema';
 import type {
   BuildContentDiffPlanOptions,
   ContentDiffPlan,
@@ -116,7 +120,7 @@ export function buildContentDiffPlan(
   const originalSource = sourceInput;
   const originalTarget = targetInput;
   const tentativeLegacyIdMappings =
-    options.legacyIdMappings ?? emptyLegacyIdMappingPlan(sourceInput);
+    options.legacyIdMappings ?? emptyLegacyIdMappingPlan(targetInput);
   const normalizedSource = applyLegacyIdMappingsToSnapshot(
     sourceInput,
     tentativeLegacyIdMappings,
@@ -437,6 +441,10 @@ export function buildContentDiffPlan(
     source: snapshotProvenance(originalSource),
     target: snapshotProvenance(originalTarget),
     options: {
+      projectMode:
+        originalSource.siteId === originalTarget.siteId
+          ? 'same_project'
+          : 'aligned_projects',
       includeDeletions: options.includeDeletions,
       uploads: options.uploads,
       migrateInvalidContent,
@@ -3720,14 +3728,8 @@ function assertSnapshotCompatibility(
 ): void {
   assertInspectionSnapshot(source);
   assertInspectionSnapshot(target);
+  assertDistinctEndpoints(source.schema, target.schema);
   assertSchemasCompatible(source.schema, target.schema);
-
-  if (source.environmentId === target.environmentId) {
-    throw new ContentDiffError(
-      'INVALID_SCOPE',
-      'Source and destination environments must be different.',
-    );
-  }
 
   if (
     source.scope.itemTypeIds.join(',') !== target.scope.itemTypeIds.join(',')

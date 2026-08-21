@@ -215,7 +215,7 @@ export function prepareLegacyIdMappings(
     const targetId = existing
       ? existing.targetId
       : reserveEntityTargetId(
-          source.siteId,
+          target.siteId,
           candidate,
           occupied.get(mappingNamespace(candidate.entityType))!,
         );
@@ -277,7 +277,7 @@ export function prepareLegacyIdMappings(
     entries: sortedEntries,
     skippedEntries: [],
     newMappingBatch: buildNewMappingBatch(
-      source.siteId,
+      target.siteId,
       registry.schema,
       sortedEntries.filter(({ status }) => status === 'new'),
       occupied.get(ITEM_NAMESPACE)!,
@@ -623,7 +623,7 @@ export function finalizeLegacyIdMappingPlan(
     entries,
     skippedEntries,
     newMappingBatch: buildNewMappingBatch(
-      source.siteId,
+      target.siteId,
       tentative.schema,
       entries.filter(({ status }) => status === 'new'),
       occupiedItems,

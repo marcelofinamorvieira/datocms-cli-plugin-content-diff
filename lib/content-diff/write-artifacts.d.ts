@@ -1,7 +1,7 @@
 import { RUNTIME_VERSION } from './runtime-template';
 import { type ContentDiffPlan } from './types';
 export interface ContentPlanEnvelope {
-    formatVersion: 9;
+    formatVersion: 10;
     runtimeVersion: typeof RUNTIME_VERSION;
     integrity: {
         algorithm: 'sha256';

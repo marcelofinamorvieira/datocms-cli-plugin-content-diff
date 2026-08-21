@@ -164,6 +164,70 @@ describe('generated content migration runtime', () => {
     expect(logs.filter((line) => line.includes('[12/12]'))).to.have.length(2);
   });
 
+  it('accepts aligned projects even when both endpoint environments have the same ID', async () => {
+    const plan = makeAlignedRuntimePlan('unchanged', 'unchanged');
+    const runtime = await loadRuntime();
+    const mock = makeRuntimeClient('unchanged', { siteId: 'target-site' });
+
+    await runtime.runContentDiffMigration(mock.client, makeEnvelope(plan), {
+      log: () => undefined,
+    });
+
+    expect(plan.options.projectMode).to.equal('aligned_projects');
+    expect(plan.source.environmentId).to.equal('main');
+    expect(plan.target.environmentId).to.equal('main');
+    expect(mock.reads.site).to.be.greaterThan(0);
+    expect(mock.mutations.update).to.equal(0);
+  });
+
+  it('rejects inconsistent project modes and identical endpoints before CMA access', async () => {
+    const runtime = await loadRuntime();
+    const cases = [
+      (() => {
+        const plan = makeAlignedRuntimePlan('unchanged', 'unchanged');
+        plan.options.projectMode = 'same_project';
+        return plan;
+      })(),
+      (() => {
+        const plan = makeRuntimePlan('unchanged', 'unchanged');
+        plan.options.projectMode = 'aligned_projects';
+        return plan;
+      })(),
+      (() => {
+        const plan = makeRuntimePlan('unchanged', 'unchanged');
+        plan.target.environmentId = plan.source.environmentId;
+        return plan;
+      })(),
+    ];
+
+    for (const plan of cases) {
+      const mock = makeRuntimeClient('unchanged');
+      const error = await expectRejects(
+        runtime.runContentDiffMigration(mock.client, makeEnvelope(plan), {
+          log: () => undefined,
+        }),
+      );
+      expect((error as RuntimeError).code).to.equal('INVALID_PLAN');
+      expect(mock.reads.site).to.equal(0);
+      expect(mock.mutations.update).to.equal(0);
+    }
+  });
+
+  it('retains the target-site check as runtime defense in depth', async () => {
+    const plan = makeAlignedRuntimePlan('unchanged', 'unchanged');
+    const runtime = await loadRuntime();
+    const mock = makeRuntimeClient('unchanged', { siteId: 'wrong-site' });
+
+    const error = await expectRejects(
+      runtime.runContentDiffMigration(mock.client, makeEnvelope(plan), {
+        log: () => undefined,
+      }),
+    );
+
+    expect((error as RuntimeError).code).to.equal('WRONG_TARGET_SITE');
+    expect(mock.mutations.update).to.equal(0);
+  });
+
   it('converges an update and treats a second run as already desired', async () => {
     const plan = makeRuntimePlan('desired', 'baseline');
     const runtime = await loadRuntime();
@@ -719,9 +783,9 @@ describe('generated content migration runtime', () => {
     expect(mock.schemaMutations.update).to.equal(0);
   });
 
-  it('rejects a runtime-v14 envelope before reading or mutating the destination', async () => {
+  it('rejects a runtime-v15 envelope before reading or mutating the destination', async () => {
     const envelope = makeEnvelope(makeRuntimePlan('unchanged', 'unchanged'));
-    envelope.runtimeVersion = '14';
+    envelope.runtimeVersion = '15';
     const runtime = await loadRuntime();
     const mock = makeRuntimeClient('unchanged');
 
@@ -5679,7 +5743,7 @@ async function loadRuntime(testExports = ''): Promise<RuntimeModule> {
 
 function makeEnvelope(plan: ContentDiffPlan): RuntimeEnvelope {
   return {
-    formatVersion: 9,
+    formatVersion: 10,
     runtimeVersion: RUNTIME_VERSION,
     integrity: {
       algorithm: 'sha256',
@@ -5714,6 +5778,40 @@ function makeRuntimePlan(
     targetSchema.itemTypes[0],
     targetSchema,
     schedules,
+  );
+
+  return buildContentDiffPlan(
+    makeSnapshot(sourceSchema, sourceRecord),
+    makeSnapshot(targetSchema, targetRecord),
+    {
+      includeDeletions: false,
+      uploads: 'referenced',
+      migrateInvalidContent: false,
+    },
+  );
+}
+
+function makeAlignedRuntimePlan(
+  sourceTitle: string,
+  targetTitle: string,
+): ContentDiffPlan {
+  const sourceSchema = makeSchema('main');
+  sourceSchema.siteId = 'source-site';
+  const targetSchema = makeSchema('main');
+  targetSchema.siteId = 'target-site';
+  const sourceRecord = canonicalizeRecord(
+    makeRecord(sourceTitle, 'source-version'),
+    null,
+    sourceSchema.itemTypes[0],
+    sourceSchema,
+    { publication: null, unpublishing: null },
+  );
+  const targetRecord = canonicalizeRecord(
+    makeRecord(targetTitle, 'target-version'),
+    null,
+    targetSchema.itemTypes[0],
+    targetSchema,
+    { publication: null, unpublishing: null },
   );
 
   return buildContentDiffPlan(
@@ -7138,6 +7236,7 @@ function makeRuntimeClient(
       nonLocalizedFocalPoints: boolean;
       improvedHexManagement: boolean;
     }>;
+    siteId?: string;
     fieldValidators?: Record<string, Record<string, any>>;
     primary?: boolean;
     updateError?: Error;
@@ -7309,7 +7408,7 @@ function makeRuntimeClient(
         if (options.traceReads) options.events?.push('site-read');
         reads.site += 1;
         return {
-          id: 'site-id',
+          id: options.siteId ?? 'site-id',
           locales: ['en'],
           timezone: options.environmentSemantics?.timezone ?? 'UTC',
           meta: {

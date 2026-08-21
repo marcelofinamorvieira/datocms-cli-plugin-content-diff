@@ -988,7 +988,10 @@ async function assertDisposableProjectSafety({
   }
 }
 
-function buildClient(apiToken: string, environment?: string): CmaClient.Client {
+export function buildClient(
+  apiToken: string,
+  environment?: string,
+): CmaClient.Client {
   return CmaClient.buildClient({
     apiToken,
     ...(environment ? { environment } : {}),
@@ -1224,7 +1227,7 @@ async function runCli({
   });
 }
 
-async function captureEnvironmentFingerprint(
+export async function captureEnvironmentFingerprint(
   client: CmaClient.Client,
 ): Promise<string> {
   const [

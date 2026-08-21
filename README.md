@@ -22,7 +22,7 @@ unless deletions are explicitly enabled.
 Node.js 20 or newer and `datocms@4.0.29` are required for this beta.
 
 ```bash
-npx datocms plugins:add marcelofinamorvieira/datocms-cli-plugin-content-diff#v0.1.0-beta.1
+npx datocms plugins:add marcelofinamorvieira/datocms-cli-plugin-content-diff#v0.2.0-beta.1
 ```
 
 This is a user-installed CLI plugin. It is not listed among the official
@@ -79,6 +79,63 @@ npx datocms migrations:run --in-place --allow-primary
 Direct primary execution has no automatic rollback and can leave a partially
 migrated environment if execution fails. Prefer promoting a validated fork when
 your project workflow allows it.
+
+### Across duplicated projects
+
+The beta can also compare two projects that were duplicated from each other, or
+from the same boilerplate project. Configure a profile for each project, then
+select both explicitly:
+
+```bash
+npx datocms content:diff "sync shared content" \
+  --source-profile=source_project \
+  --destination-profile=destination_project \
+  --autogenerate=main:main
+```
+
+The destination profile owns the migration directory and tracking model. Run
+the generated migration with destination credentials only:
+
+```bash
+npx datocms migrations:run \
+  --profile=destination_project \
+  --source=main \
+  --dry-run
+
+npx datocms migrations:run \
+  --profile=destination_project \
+  --source=main
+```
+
+To compare the source environment with the destination project's primary
+environment, omit the destination from `--autogenerate`:
+
+```bash
+npx datocms content:diff "sync blueprint into destination primary" \
+  --source-profile=source_project \
+  --destination-profile=destination_project \
+  --autogenerate=main
+
+npx datocms migrations:run \
+  --profile=destination_project \
+  --destination=content-diff-review \
+  --dry-run
+```
+
+Common ancestry is your responsibility: the CMA cannot prove that two projects
+share a history. The plugin verifies the managed model, field, workflow/stage,
+locale, validator, default, and content-setting identities exactly and fails
+closed when they have drifted. Unrelated projects and generic schema/content ID
+mapping are not supported. Cross-project schema autogeneration is also not part
+of this beta; keep both projects aligned through the same checked-in schema
+migration history. A copied `datocms_content_diff` legacy-ID ledger that still
+names another project is rejected rather than silently rebased.
+
+Use OAuth-linked profiles or profile-specific token environment variables when
+possible. `--source-api-token` and `--destination-api-token` are available for
+explicit automation, but tokens and local profile names are never written into
+generated files. Only generation needs source credentials. For durable transfer
+of source-only upload bytes, add `--bundle-assets`.
 
 Useful optional scopes:
 

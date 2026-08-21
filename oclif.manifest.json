@@ -26,6 +26,10 @@
         {
           "description": "Migrate eligible invalid or historical-null content using temporary schema changes",
           "command": "<%= config.bin %> <%= command.id %> \"sync invalid content\" --autogenerate=source:destination --migrate-invalid-content"
+        },
+        {
+          "description": "Generate a migration across projects that share aligned public IDs",
+          "command": "<%= config.bin %> <%= command.id %> \"sync shared content\" --source-profile=source_project --destination-profile=destination_project --autogenerate=main:main"
         }
       ],
       "flags": {
@@ -101,6 +105,34 @@
           "description": "Generate a migration from SOURCE to DESTINATION. When DESTINATION is omitted, the primary environment is used (for example, --autogenerate=staging or --autogenerate=staging:production)",
           "name": "autogenerate",
           "required": true,
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "source-profile": {
+          "description": "Read content from this configured profile (must be used with --destination-profile)",
+          "name": "source-profile",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "destination-profile": {
+          "description": "Compare and generate for this configured profile (must be used with --source-profile)",
+          "name": "destination-profile",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "source-api-token": {
+          "description": "Specify a custom API key for --source-profile instead of its configured authentication",
+          "name": "source-api-token",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "destination-api-token": {
+          "description": "Specify a custom API key for --destination-profile instead of its configured authentication",
+          "name": "destination-api-token",
           "hasDynamicHelp": false,
           "multiple": false,
           "type": "option"
@@ -491,5 +523,5 @@
       ]
     }
   },
-  "version": "0.1.0-beta.1"
+  "version": "0.2.0-beta.1"
 }

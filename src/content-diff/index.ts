@@ -22,7 +22,7 @@ import {
 } from './permissions';
 import { buildContentDiffPlan } from './plan';
 import {
-  assertSameProject,
+  assertDistinctEndpoints,
   assertSchemasCompatible,
   fetchSchemaSnapshot,
   migrationsTrackingModelId,
@@ -84,13 +84,19 @@ export type ContentDiffMigrationSummary = {
   }>;
 };
 
+export interface GenerateContentDiffMigrationEndpoint {
+  /** Project-scoped client used only for project/environment permission proofs. */
+  rootClient: CmaClient.Client;
+  /** Client already scoped to this endpoint's environment. */
+  environmentClient: CmaClient.Client;
+  environmentId: string;
+  migrationsModelApiKey?: string;
+  contentDiffModelApiKey?: string;
+}
+
 export interface GenerateContentDiffMigrationInput {
-  client: CmaClient.Client;
-  buildClientForEnvironment: (
-    environmentId: string,
-  ) => Promise<CmaClient.Client>;
-  sourceEnvironmentId: string;
-  destinationEnvironmentId: string;
+  source: GenerateContentDiffMigrationEndpoint;
+  destination: GenerateContentDiffMigrationEndpoint;
   migrationFilePath: string;
   format: 'js' | 'ts';
   options: {
@@ -99,8 +105,6 @@ export interface GenerateContentDiffMigrationInput {
     includeDeletions: boolean;
     bundleAssets: boolean;
     migrateInvalidContent: boolean;
-    migrationsModelApiKey?: string;
-    contentDiffModelApiKey?: string;
   };
 }
 
@@ -116,52 +120,54 @@ export interface GenerateContentDiffMigrationResult {
 }
 
 export async function generateContentDiffMigration({
-  client,
-  buildClientForEnvironment,
-  sourceEnvironmentId,
-  destinationEnvironmentId,
+  source,
+  destination,
   migrationFilePath,
   format,
   options,
 }: GenerateContentDiffMigrationInput): Promise<GenerateContentDiffMigrationResult> {
-  if (sourceEnvironmentId === destinationEnvironmentId) {
-    throw new Error('Source and destination environments must be different');
-  }
-  const contentDiffModelApiKey =
-    options.contentDiffModelApiKey ?? DEFAULT_CONTENT_DIFF_MODEL_API_KEY;
-  const migrationsModelApiKey =
-    options.migrationsModelApiKey ?? 'schema_migration';
-  if (migrationsModelApiKey === contentDiffModelApiKey) {
-    throw new ContentDiffError(
-      'INVALID_SCOPE',
-      `The migrations tracking model and internal content-diff ledger cannot both use API key ${contentDiffModelApiKey}. Configure a different migrations model API key.`,
-      { contentDiffModelApiKey },
-    );
-  }
+  const sourceEnvironmentId = source.environmentId;
+  const destinationEnvironmentId = destination.environmentId;
+  const sourceClient = source.environmentClient;
+  const destinationClient = destination.environmentClient;
+  const sourceContentDiffModelApiKey =
+    source.contentDiffModelApiKey ?? DEFAULT_CONTENT_DIFF_MODEL_API_KEY;
+  const destinationContentDiffModelApiKey =
+    destination.contentDiffModelApiKey ?? DEFAULT_CONTENT_DIFF_MODEL_API_KEY;
+  const sourceMigrationsModelApiKey =
+    source.migrationsModelApiKey ?? 'schema_migration';
+  const destinationMigrationsModelApiKey =
+    destination.migrationsModelApiKey ?? 'schema_migration';
+  assertDistinctInternalModelApiKeys(
+    sourceMigrationsModelApiKey,
+    sourceContentDiffModelApiKey,
+    'source',
+  );
+  assertDistinctInternalModelApiKeys(
+    destinationMigrationsModelApiKey,
+    destinationContentDiffModelApiKey,
+    'destination',
+  );
 
-  const [sourceClient, destinationClient] = await Promise.all([
-    buildClientForEnvironment(sourceEnvironmentId),
-    buildClientForEnvironment(destinationEnvironmentId),
-  ]);
   const [sourceSchema, destinationSchema] = await Promise.all([
     fetchSchemaSnapshot(sourceClient, sourceEnvironmentId),
     fetchSchemaSnapshot(destinationClient, destinationEnvironmentId),
   ]);
 
-  assertSameProject(sourceSchema, destinationSchema);
+  assertDistinctEndpoints(sourceSchema, destinationSchema);
   assertNoManagedRelationshipToMappingModel(
     sourceSchema,
-    contentDiffModelApiKey,
+    sourceContentDiffModelApiKey,
   );
   assertNoManagedRelationshipToMappingModel(
     destinationSchema,
-    contentDiffModelApiKey,
+    destinationContentDiffModelApiKey,
   );
   const sourceScopedSchema = schemaForScope(
     sourceSchema,
     options.itemTypes,
-    migrationsModelApiKey,
-    contentDiffModelApiKey,
+    sourceMigrationsModelApiKey,
+    sourceContentDiffModelApiKey,
   );
   let destinationScopedSchema: SchemaSnapshot;
 
@@ -169,8 +175,8 @@ export async function generateContentDiffMigration({
     destinationScopedSchema = schemaForScope(
       destinationSchema,
       options.itemTypes,
-      migrationsModelApiKey,
-      contentDiffModelApiKey,
+      destinationMigrationsModelApiKey,
+      destinationContentDiffModelApiKey,
     );
   } catch (error) {
     if (error instanceof ContentDiffError && error.code === 'INVALID_SCOPE') {
@@ -185,32 +191,32 @@ export async function generateContentDiffMigration({
     readLegacyIdMappingRegistry(
       sourceClient,
       sourceSchema,
-      contentDiffModelApiKey,
+      sourceContentDiffModelApiKey,
       false,
     ),
     readLegacyIdMappingRegistry(
       destinationClient,
       destinationSchema,
-      contentDiffModelApiKey,
+      destinationContentDiffModelApiKey,
       false,
     ),
   ]);
   const sourceMigrationsModelId = migrationsTrackingModelId(
     sourceSchema,
-    migrationsModelApiKey,
+    sourceMigrationsModelApiKey,
   );
   const destinationMigrationsModelId = migrationsTrackingModelId(
     destinationSchema,
-    migrationsModelApiKey,
+    destinationMigrationsModelApiKey,
   );
   await Promise.all([
     assertUnrestrictedReadAccess(
-      client,
+      source.rootClient,
       [sourceEnvironmentId],
       sourceSchema.itemTypes.filter(({ id }) => id !== sourceMigrationsModelId),
     ),
     assertUnrestrictedReadAccess(
-      client,
+      destination.rootClient,
       [destinationEnvironmentId],
       destinationSchema.itemTypes.filter(
         ({ id }) => id !== destinationMigrationsModelId,
@@ -218,24 +224,30 @@ export async function generateContentDiffMigration({
     ),
   ]);
 
-  const scope = {
+  const sourceScope = {
     itemTypes: options.itemTypes,
     uploads: options.uploads,
-    migrationsModelApiKey,
-    contentDiffModelApiKey,
+    migrationsModelApiKey: sourceMigrationsModelApiKey,
+    contentDiffModelApiKey: sourceContentDiffModelApiKey,
+  } as const;
+  const destinationScope = {
+    itemTypes: options.itemTypes,
+    uploads: options.uploads,
+    migrationsModelApiKey: destinationMigrationsModelApiKey,
+    contentDiffModelApiKey: destinationContentDiffModelApiKey,
   } as const;
   const sourceSnapshot = await captureContentSnapshot({
     client: sourceClient,
     environmentId: sourceEnvironmentId,
     schema: sourceSchema,
-    scope,
+    scope: sourceScope,
     maxAttempts: 3,
     fullAccessVerified: true,
   });
   const legacyRegistry = await readLegacyIdMappingRegistry(
     destinationClient,
     destinationSchema,
-    contentDiffModelApiKey,
+    destinationContentDiffModelApiKey,
     true,
   );
   const sourceUploadIds = new Set(Object.keys(sourceSnapshot.uploads));
@@ -247,7 +259,7 @@ export async function generateContentDiffMigration({
     environmentId: destinationEnvironmentId,
     schema: destinationSchema,
     scope: {
-      ...scope,
+      ...destinationScope,
       // A source asset can already exist in the destination without being
       // referenced by the selected destination records. Include those IDs in
       // the baseline so it is reconciled instead of mistaken for a create.
@@ -491,7 +503,7 @@ export async function generateContentDiffMigration({
   const plan = buildContentDiffPlan(sourceSnapshot, destinationSnapshot, {
     includeDeletions: options.includeDeletions,
     uploads: options.uploads,
-    migrationsModelApiKey,
+    migrationsModelApiKey: destinationMigrationsModelApiKey,
     migrateInvalidContent: options.migrateInvalidContent,
     invalidContentDiagnostics: resolvedInvalidContentDiagnostics,
     entityIdCollisions,
@@ -538,6 +550,20 @@ export async function generateContentDiffMigration({
     ...(artifacts.assetsPath ? { assetsPath: artifacts.assetsPath } : {}),
     summary: summarizeForCommand(plan),
   };
+}
+
+function assertDistinctInternalModelApiKeys(
+  migrationsModelApiKey: string,
+  contentDiffModelApiKey: string,
+  endpoint: 'source' | 'destination',
+): void {
+  if (migrationsModelApiKey !== contentDiffModelApiKey) return;
+
+  throw new ContentDiffError(
+    'INVALID_SCOPE',
+    `The ${endpoint} migrations tracking model and internal content-diff ledger cannot both use API key ${contentDiffModelApiKey}. Configure a different migrations model API key.`,
+    { endpoint, contentDiffModelApiKey },
+  );
 }
 
 export function assertNoLegacyDestinationIdCollisions(

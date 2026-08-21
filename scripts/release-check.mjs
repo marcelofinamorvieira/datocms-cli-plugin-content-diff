@@ -14,7 +14,7 @@ if (args.has('--help')) {
   console.log(`Usage: npm run release:check -- [--skip-e2e]
 
 Runs every offline release check and, by default, the complete disposable-project
-real-CMA suite. Pass --skip-e2e when the live suite is intentionally deferred.`);
+real-CMA suites. Pass --skip-e2e when both live suites are intentionally deferred.`);
   process.exit(0);
 }
 
@@ -45,10 +45,11 @@ run('git', ['diff', '--check']);
 
 if (args.has('--skip-e2e')) {
   console.log(
-    '\n[release-check] Skipped the disposable-project real-CMA suite by explicit request.',
+    '\n[release-check] Skipped both disposable-project real-CMA suites by explicit request.',
   );
 } else {
   run(npm, ['run', 'test:e2e:real-cma']);
+  run(npm, ['run', 'test:e2e:cross-project']);
 }
 
 console.log('\n[release-check] All requested checks passed.');

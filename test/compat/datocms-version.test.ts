@@ -82,7 +82,7 @@ describe('DatoCMS CLI compatibility', () => {
         fakeCommand({
           bin: 'content-diff',
           name: '@marcelofinamorvieira/datocms-cli-plugin-content-diff',
-          version: '0.1.0-beta.1',
+          version: '0.2.0-beta.1',
         }),
       ),
     ).not.to.throw();

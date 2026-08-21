@@ -6,8 +6,8 @@ export type JsonObject = {
     [key: string]: JsonValue;
 };
 export declare const CONTENT_SNAPSHOT_FORMAT_VERSION: 3;
-export declare const CONTENT_PLAN_FORMAT_VERSION: 9;
-export declare const CONTENT_DIFF_GENERATOR_VERSION: "1.0.0";
+export declare const CONTENT_PLAN_FORMAT_VERSION: 10;
+export declare const CONTENT_DIFF_GENERATOR_VERSION: "1.1.0";
 export declare const INVALID_CONTENT_FORMAT_VERSION: 1;
 export declare const LEGACY_ID_MAPPING_FORMAT_VERSION: 1;
 export declare const DEFAULT_CONTENT_DIFF_MODEL_API_KEY: "datocms_content_diff";
@@ -73,6 +73,7 @@ export interface SchemaSnapshot {
 }
 export type ItemTypeSelection = 'all' | string[];
 export type UploadSelection = 'referenced' | 'all';
+export type ContentDiffProjectMode = 'same_project' | 'aligned_projects';
 export interface ContentSnapshotScope {
     itemTypes: ItemTypeSelection;
     uploads: UploadSelection;
@@ -570,6 +571,8 @@ export interface ContentDiffPlan {
         capturedAt: string;
     };
     options: {
+        /** Whether both snapshots belong to one project or to asserted aligned projects. */
+        projectMode: ContentDiffProjectMode;
         includeDeletions: boolean;
         uploads: UploadSelection;
         migrateInvalidContent: boolean;

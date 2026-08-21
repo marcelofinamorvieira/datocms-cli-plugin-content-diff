@@ -1,6 +1,6 @@
 {
   "name": "@marcelofinamorvieira/datocms-cli-plugin-content-diff",
-  "version": "0.1.0-beta.1",
+  "version": "0.2.0-beta.1",
   "description": "Unofficial beta DatoCMS CLI plugin for generating reviewable content migrations between environments",
   "keywords": ["datocms", "cli", "oclif", "content", "migration", "beta"],
   "private": true,
@@ -24,6 +24,7 @@
     "prepare": "npm run build && npm run manifest",
     "release:check": "node scripts/release-check.mjs",
     "test": "rm -f oclif.manifest.json && mocha --timeout 200000 --require ts-node/register --forbid-only \"test/**/*.test.ts\"",
+    "test:e2e:cross-project": "mocha --timeout 1800000 --require ts-node/register --forbid-only \"test/cross-project-e2e/**/*.e2e.ts\"",
     "test:e2e:real-cma": "mocha --timeout 1800000 --require ts-node/register --forbid-only \"test/e2e/**/*.e2e.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:test": "tsc -p test/tsconfig.json --noEmit"

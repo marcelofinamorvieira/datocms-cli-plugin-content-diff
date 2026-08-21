@@ -1,11 +1,30 @@
-import { access, readdir } from 'node:fs/promises';
-import { dirname, join, relative, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { access, readFile, readdir } from 'node:fs/promises';
+import { basename, dirname, extname, join, relative, resolve } from 'node:path';
 import { CmaClient, CmaClientCommand, oclif } from '@datocms/cli-utils';
 import { require as tsxRequire } from 'tsx/cjs/api';
 import { assertSupportedDatocmsCli } from '../../compat/datocms-version';
+import { stableStringify } from '../../content-diff/canonicalize';
+import { CONTENT_DIFF_MIGRATION_BINDING_VERSION } from '../../content-diff/runtime-template';
+import type { JsonValue } from '../../content-diff/types';
 import { CONTENT_DIFF_MAPPING_MODEL_API_KEY } from '../../utils/environments-diff/fetch-schema';
 
 const MIGRATION_FILE_REGEXP = /^\d+.*\.(js|ts)$/;
+const CONTENT_DIFF_BINDING_PREFIX = '// datocms-content-diff-binding ';
+const CONTENT_DIFF_BOUND_RUNTIME_VERSION = '16';
+
+type MigrationScript = {
+  filename: string;
+  path: string;
+  legacy: boolean;
+};
+
+type ContentDiffMigrationBinding = {
+  bindingVersion: typeof CONTENT_DIFF_MIGRATION_BINDING_VERSION;
+  targetSiteId: string;
+  manifestBasename: string;
+  manifestSha256: string;
+};
 
 /**
  * Protocol understood by generated content-diff migration entrypoints.
@@ -182,7 +201,37 @@ export default class Command extends CmaClientCommand {
             'Review every pending migration: a failure partway through can leave primary partially migrated, with no automatic rollback.',
         );
       }
-    } else {
+    }
+
+    // Resolve migration history and validate generated content-diff artifacts
+    // against the authenticated project before any fork or tracking-model
+    // repair can mutate DatoCMS. A fork inherits this exact source history.
+    const sourceClient = await this.buildClient({ environment: sourceEnv.id });
+    const sourceMigrationModel = await this.findMigrationModelReadOnly(
+      sourceClient,
+      migrationsModelApiKey,
+    );
+    const migrationScriptsToRun = await this.migrationScriptsToRun(
+      sourceMigrationModel,
+      sourceClient,
+      migrationsDir,
+    );
+    const targetSite = await this.client.site.find();
+    await this.validatePendingContentDiffBindings(
+      migrationScriptsToRun,
+      migrationsDir,
+      String(targetSite.id),
+    );
+
+    if (migrationScriptsToRun.length === 0) {
+      this.log('No new migration scripts to run, skipping operation');
+      return {
+        environmentId: sourceEnv.id,
+        runMigrationScripts: [],
+      };
+    }
+
+    if (!inPlace) {
       destinationEnvId = await this.forkEnvironment(
         sourceEnv,
         destinationEnvId,
@@ -193,7 +242,10 @@ export default class Command extends CmaClientCommand {
       );
     }
 
-    const envClient = await this.buildClient({ environment: destinationEnvId });
+    const envClient =
+      dryRun || inPlace
+        ? sourceClient
+        : await this.buildClient({ environment: destinationEnvId });
     const executionContext: MigrationExecutionContext = {
       environmentId: destinationEnvId,
       inPlace: Boolean(inPlace),
@@ -201,17 +253,13 @@ export default class Command extends CmaClientCommand {
       contentDiffProtocolVersion: CONTENT_DIFF_MIGRATION_PROTOCOL_VERSION,
     };
 
-    const migrationModel = await this.upsertMigrationModel(
-      envClient,
-      migrationsModelApiKey,
-      dryRun,
-    );
-
-    const migrationScriptsToRun = await this.migrationScriptsToRun(
-      migrationModel,
-      envClient,
-      migrationsDir,
-    );
+    const migrationModel = dryRun
+      ? sourceMigrationModel
+      : await this.upsertMigrationModel(
+          envClient,
+          migrationsModelApiKey,
+          false,
+        );
 
     const someMigrationScriptRequiresLegacyClient = migrationScriptsToRun.some(
       (s) => s.legacy,
@@ -264,7 +312,7 @@ export default class Command extends CmaClientCommand {
   }
 
   private async runMigrationScript(
-    script: { filename: string; path: string; legacy: boolean },
+    script: MigrationScript,
     envClient: CmaClient.Client,
     legacyEnvClient: unknown,
     dryRun: boolean,
@@ -336,6 +384,301 @@ export default class Command extends CmaClientCommand {
     }
   }
 
+  private async findMigrationModelReadOnly(
+    client: CmaClient.Client,
+    migrationModelApiKey: string,
+  ): Promise<CmaClient.ApiTypes.ItemType | null> {
+    let migrationModel: CmaClient.ApiTypes.ItemType;
+
+    try {
+      migrationModel = await client.itemTypes.find(migrationModelApiKey);
+    } catch (error) {
+      if (
+        error instanceof CmaClient.ApiError &&
+        error.response.status === 404
+      ) {
+        return null;
+      }
+      throw error;
+    }
+
+    const fields = await client.fields.list(migrationModel.id);
+    if (fields.length > 0) {
+      this.assertUsableExistingMigrationModel(
+        migrationModel,
+        fields,
+        migrationModelApiKey,
+      );
+      return migrationModel;
+    }
+
+    this.assertExactMigrationItemType(migrationModel, migrationModelApiKey);
+    if (await this.migrationModelHasRecords(client, migrationModel)) {
+      this.error(
+        `Configured migrations model "${migrationModelApiKey}" (${migrationModel.id}) is missing its name field but already contains tracking records. migrations:run cannot safely reconstruct the lost migration history.`,
+      );
+    }
+
+    return migrationModel;
+  }
+
+  private async validatePendingContentDiffBindings(
+    scripts: MigrationScript[],
+    migrationsDir: string,
+    actualTargetSiteId: string,
+  ): Promise<void> {
+    for (const script of scripts) {
+      if (script.legacy) continue;
+
+      // eslint-disable-next-line no-await-in-loop
+      const source = await readFile(script.path, 'utf8');
+      const bindingLines = source
+        .split(/\r?\n/u)
+        .filter((line) => line.startsWith(CONTENT_DIFF_BINDING_PREFIX));
+      const referencesBoundRuntime = source.includes(
+        `.datocms-content/runtime-v${CONTENT_DIFF_BOUND_RUNTIME_VERSION}`,
+      );
+
+      if (bindingLines.length === 0) {
+        if (referencesBoundRuntime) {
+          this.bindingError(
+            script,
+            migrationsDir,
+            'is missing its required static destination binding',
+          );
+        }
+        // Ordinary migrations and the unbound runtime-v15 format remain
+        // compatible with this runner.
+        continue;
+      }
+      if (bindingLines.length !== 1) {
+        this.bindingError(
+          script,
+          migrationsDir,
+          'contains multiple static destination bindings',
+        );
+      }
+      if (!referencesBoundRuntime) {
+        this.bindingError(
+          script,
+          migrationsDir,
+          `does not reference content-diff runtime v${CONTENT_DIFF_BOUND_RUNTIME_VERSION}`,
+        );
+      }
+
+      let binding: ContentDiffMigrationBinding;
+      try {
+        binding = JSON.parse(
+          bindingLines[0].slice(CONTENT_DIFF_BINDING_PREFIX.length),
+        ) as ContentDiffMigrationBinding;
+      } catch {
+        this.bindingError(
+          script,
+          migrationsDir,
+          'contains malformed static destination binding JSON',
+        );
+      }
+      this.assertExactContentDiffBinding(binding, script, migrationsDir);
+
+      const expectedManifestBasename = `${basename(
+        script.filename,
+        extname(script.filename),
+      )}.plan.json`;
+      if (binding.manifestBasename !== expectedManifestBasename) {
+        this.bindingError(
+          script,
+          migrationsDir,
+          `is bound to manifest "${binding.manifestBasename}" instead of "${expectedManifestBasename}"`,
+        );
+      }
+
+      const manifestPath = join(
+        migrationsDir,
+        '.datocms-content',
+        binding.manifestBasename,
+      );
+      let manifestBytes: Buffer;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        manifestBytes = await readFile(manifestPath);
+      } catch {
+        this.bindingError(
+          script,
+          migrationsDir,
+          `cannot read bound manifest "${binding.manifestBasename}"`,
+        );
+      }
+
+      const actualManifestSha256 = createHash('sha256')
+        .update(manifestBytes)
+        .digest('hex');
+      if (actualManifestSha256 !== binding.manifestSha256) {
+        this.bindingError(
+          script,
+          migrationsDir,
+          'manifest integrity validation failed',
+        );
+      }
+
+      let manifest: unknown;
+      try {
+        manifest = JSON.parse(manifestBytes.toString('utf8'));
+      } catch {
+        this.bindingError(
+          script,
+          migrationsDir,
+          'bound manifest contains malformed JSON',
+        );
+      }
+      this.assertBoundManifest(
+        manifest,
+        binding,
+        actualTargetSiteId,
+        script,
+        migrationsDir,
+      );
+    }
+  }
+
+  private assertExactContentDiffBinding(
+    binding: ContentDiffMigrationBinding,
+    script: MigrationScript,
+    migrationsDir: string,
+  ): void {
+    const exactKeys = [
+      'bindingVersion',
+      'manifestBasename',
+      'manifestSha256',
+      'targetSiteId',
+    ];
+    if (
+      !binding ||
+      typeof binding !== 'object' ||
+      Array.isArray(binding) ||
+      JSON.stringify(Object.keys(binding).sort()) !==
+        JSON.stringify(exactKeys) ||
+      binding.bindingVersion !== CONTENT_DIFF_MIGRATION_BINDING_VERSION ||
+      typeof binding.targetSiteId !== 'string' ||
+      binding.targetSiteId.length === 0 ||
+      typeof binding.manifestBasename !== 'string' ||
+      binding.manifestBasename.length === 0 ||
+      basename(binding.manifestBasename) !== binding.manifestBasename ||
+      typeof binding.manifestSha256 !== 'string' ||
+      !/^[0-9a-f]{64}$/u.test(binding.manifestSha256)
+    ) {
+      this.bindingError(
+        script,
+        migrationsDir,
+        'contains an invalid static destination binding',
+      );
+    }
+  }
+
+  private assertBoundManifest(
+    manifest: unknown,
+    binding: ContentDiffMigrationBinding,
+    actualTargetSiteId: string,
+    script: MigrationScript,
+    migrationsDir: string,
+  ): void {
+    if (!isPlainObject(manifest)) {
+      this.bindingError(
+        script,
+        migrationsDir,
+        'bound manifest is not an object',
+      );
+    }
+    if (manifest.formatVersion !== 10 || manifest.runtimeVersion !== '16') {
+      this.bindingError(
+        script,
+        migrationsDir,
+        'bound manifest has an unsupported format or runtime version',
+      );
+    }
+    if (
+      !isPlainObject(manifest.integrity) ||
+      manifest.integrity.algorithm !== 'sha256' ||
+      typeof manifest.integrity.planSha256 !== 'string' ||
+      !isPlainObject(manifest.plan)
+    ) {
+      this.bindingError(
+        script,
+        migrationsDir,
+        'bound manifest has invalid integrity metadata',
+      );
+    }
+    const actualPlanSha256 = createHash('sha256')
+      .update(stableStringify(manifest.plan as JsonValue))
+      .digest('hex');
+    if (actualPlanSha256 !== manifest.integrity.planSha256) {
+      this.bindingError(
+        script,
+        migrationsDir,
+        'bound plan integrity validation failed',
+      );
+    }
+
+    const plan = manifest.plan;
+    if (
+      plan.formatVersion !== 10 ||
+      !isPlainObject(plan.source) ||
+      !isPlainObject(plan.target) ||
+      !isPlainObject(plan.schema) ||
+      !isPlainObject(plan.options)
+    ) {
+      this.bindingError(
+        script,
+        migrationsDir,
+        'bound manifest is missing plan identity metadata',
+      );
+    }
+    const sourceSiteId = String(plan.source.siteId);
+    const targetSiteId = String(plan.target.siteId);
+    const projectMode = plan.options.projectMode;
+    if (
+      (projectMode !== 'same_project' && projectMode !== 'aligned_projects') ||
+      (projectMode === 'same_project' && sourceSiteId !== targetSiteId) ||
+      (projectMode === 'aligned_projects' && sourceSiteId === targetSiteId) ||
+      String(plan.schema.siteId) !== sourceSiteId ||
+      (sourceSiteId === targetSiteId &&
+        String(plan.source.environmentId) === String(plan.target.environmentId))
+    ) {
+      this.bindingError(
+        script,
+        migrationsDir,
+        'bound manifest has inconsistent project-mode or endpoint metadata',
+      );
+    }
+    if (binding.targetSiteId !== targetSiteId) {
+      this.bindingError(
+        script,
+        migrationsDir,
+        'static destination binding does not match the manifest target site',
+      );
+    }
+    if (actualTargetSiteId !== binding.targetSiteId) {
+      this.bindingError(
+        script,
+        migrationsDir,
+        `targets DatoCMS project "${binding.targetSiteId}", but the active profile targets "${actualTargetSiteId}"`,
+      );
+    }
+  }
+
+  private bindingError(
+    script: MigrationScript,
+    migrationsDir: string,
+    reason: string,
+  ): never {
+    return this.error(
+      `Content-diff migration "${relative(
+        migrationsDir,
+        script.path,
+      )}" ${reason}. No migration was executed.`,
+      { exit: 1 },
+    );
+  }
+
   private async migrationScriptsToRun(
     migrationModel: CmaClient.ApiTypes.ItemType | null,
     envClient: CmaClient.Client,
@@ -353,11 +696,7 @@ export default class Command extends CmaClientCommand {
         legacy: false,
       }));
 
-    let allLegacyMigrationScripts: Array<{
-      filename: string;
-      path: string;
-      legacy: boolean;
-    }> = [];
+    let allLegacyMigrationScripts: MigrationScript[] = [];
 
     try {
       const legacyMigrationsDir = join(migrationsDir, 'legacyClient');
@@ -691,4 +1030,8 @@ export default class Command extends CmaClientCommand {
       { exit: 1 },
     );
   }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

@@ -47,7 +47,7 @@ import {
 } from './upload-contract';
 
 export interface ContentPlanEnvelope {
-  formatVersion: 9;
+  formatVersion: 10;
   runtimeVersion: typeof RUNTIME_VERSION;
   integrity: {
     algorithm: 'sha256';
@@ -146,6 +146,7 @@ export async function writeContentDiffArtifacts({
       format,
       planBasename,
       manifestSha256,
+      manifestPlan.target.siteId,
     ).trimEnd()}\n`;
 
     // Validate everything before any final path becomes visible.
@@ -240,7 +241,7 @@ export async function writeContentDiffArtifacts({
 
 export function buildEnvelope(plan: ContentDiffPlan): ContentPlanEnvelope {
   return {
-    formatVersion: 9,
+    formatVersion: 10,
     runtimeVersion: RUNTIME_VERSION,
     integrity: {
       algorithm: 'sha256',
@@ -251,7 +252,7 @@ export function buildEnvelope(plan: ContentDiffPlan): ContentPlanEnvelope {
 }
 
 function assertEnvelope(envelope: ContentPlanEnvelope): void {
-  if (envelope.formatVersion !== 9) {
+  if (envelope.formatVersion !== 10) {
     throw new Error(
       `Unsupported content plan envelope version: ${String(
         envelope.formatVersion,
@@ -293,6 +294,29 @@ function assertEnvelope(envelope: ContentPlanEnvelope): void {
         envelope.plan.legacyIdMappings.formatVersion,
       )}`,
     );
+  }
+
+  const sourceSiteId = String(envelope.plan.source.siteId);
+  const targetSiteId = String(envelope.plan.target.siteId);
+  const { projectMode } = envelope.plan.options;
+  if (
+    (projectMode !== 'same_project' && projectMode !== 'aligned_projects') ||
+    (projectMode === 'same_project' && sourceSiteId !== targetSiteId) ||
+    (projectMode === 'aligned_projects' && sourceSiteId === targetSiteId)
+  ) {
+    throw new Error(
+      `Content plan project mode ${projectMode} is inconsistent with its source and destination projects`,
+    );
+  }
+  if (
+    sourceSiteId === targetSiteId &&
+    String(envelope.plan.source.environmentId) ===
+      String(envelope.plan.target.environmentId)
+  ) {
+    throw new Error('Content plan source and destination endpoints are equal');
+  }
+  if (String(envelope.plan.schema.siteId) !== sourceSiteId) {
+    throw new Error('Content plan schema is not bound to its source project');
   }
 
   if (
@@ -395,7 +419,7 @@ function assertEnvelope(envelope: ContentPlanEnvelope): void {
   const invalidUniqueRelease = findInvalidUniqueRelease(envelope.plan);
   if (invalidUniqueRelease) {
     throw new Error(
-      `Unique-value release ${invalidUniqueRelease.recordId}.${invalidUniqueRelease.fieldApiKey} ${invalidUniqueRelease.reason} and cannot be serialized as an executable V9 content migration`,
+      `Unique-value release ${invalidUniqueRelease.recordId}.${invalidUniqueRelease.fieldApiKey} ${invalidUniqueRelease.reason} and cannot be serialized as an executable V10 content migration`,
     );
   }
 
@@ -404,7 +428,7 @@ function assertEnvelope(envelope: ContentPlanEnvelope): void {
   )[0];
   if (unsupportedFreshNestedUpdate) {
     throw new Error(
-      `Record ${unsupportedFreshNestedUpdate.recordId} would introduce fresh nested block ${unsupportedFreshNestedUpdate.blockId} during ${unsupportedFreshNestedUpdate.stage} and cannot be serialized as an executable V9 content migration`,
+      `Record ${unsupportedFreshNestedUpdate.recordId} would introduce fresh nested block ${unsupportedFreshNestedUpdate.blockId} during ${unsupportedFreshNestedUpdate.stage} and cannot be serialized as an executable V10 content migration`,
     );
   }
 
@@ -413,7 +437,7 @@ function assertEnvelope(envelope: ContentPlanEnvelope): void {
   );
   if (unsupportedDeleteRelease) {
     throw new Error(
-      `Delete-reference release ${unsupportedDeleteRelease.recordId} requires fresh published-derived nested block IDs and cannot be serialized as an executable V9 content migration`,
+      `Delete-reference release ${unsupportedDeleteRelease.recordId} requires fresh published-derived nested block IDs and cannot be serialized as an executable V10 content migration`,
     );
   }
 

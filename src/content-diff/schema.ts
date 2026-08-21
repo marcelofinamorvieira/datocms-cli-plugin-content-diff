@@ -281,8 +281,6 @@ export function assertSchemasCompatible(
   source: SchemaSnapshot,
   target: SchemaSnapshot,
 ): void {
-  assertSameProject(source, target);
-
   if (
     stableStringify(source.environmentSemantics) !==
     stableStringify(target.environmentSemantics)
@@ -318,14 +316,17 @@ export function assertSchemasCompatible(
   }
 }
 
-export function assertSameProject(
+export function assertDistinctEndpoints(
   source: SchemaSnapshot,
   target: SchemaSnapshot,
 ): void {
-  if (source.siteId !== target.siteId) {
+  if (
+    source.siteId === target.siteId &&
+    source.environmentId === target.environmentId
+  ) {
     throw new ContentDiffError(
-      'CROSS_PROJECT',
-      'Content diff only supports environments from the same DatoCMS project.',
+      'INVALID_SCOPE',
+      'Source and destination must identify different project/environment endpoints.',
       {
         sourceSiteId: source.siteId,
         targetSiteId: target.siteId,
@@ -337,12 +338,16 @@ export function assertSameProject(
 }
 
 export function schemaMismatch(
-  source: Pick<SchemaSnapshot, 'environmentId'>,
-  target: Pick<SchemaSnapshot, 'environmentId'>,
+  source: Pick<SchemaSnapshot, 'siteId' | 'environmentId'>,
+  target: Pick<SchemaSnapshot, 'siteId' | 'environmentId'>,
 ): ContentDiffError {
+  const remediation =
+    source.siteId === target.siteId
+      ? 'Apply a schema migration first, then regenerate the content diff.'
+      : 'Apply the same checked-in schema migration history to both aligned projects first, then regenerate the content diff. Cross-project schema autogeneration is not supported.';
   return new ContentDiffError(
     'SCHEMA_MISMATCH',
-    `Source environment "${source.environmentId}" and destination environment "${target.environmentId}" do not have identical managed schemas. Apply a schema migration first, then regenerate the content diff. No content records were read.`,
+    `Source environment "${source.environmentId}" and destination environment "${target.environmentId}" do not have identical managed schemas. ${remediation} No content records were read.`,
     {
       sourceEnvironmentId: source.environmentId,
       destinationEnvironmentId: target.environmentId,

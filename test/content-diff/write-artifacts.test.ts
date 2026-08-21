@@ -74,7 +74,7 @@ describe('content diff artifact writer', () => {
     const runtime = await readFile(result.runtimePath, 'utf8');
 
     expect(result.manifestSha256).to.equal(sha256(manifestBytes));
-    expect(manifest.formatVersion).to.equal(9);
+    expect(manifest.formatVersion).to.equal(10);
     expect(manifest.runtimeVersion).to.equal(RUNTIME_VERSION);
     expect(manifest.integrity.planSha256).to.equal(
       sha256(stableStringify(manifest.plan)),
@@ -84,6 +84,12 @@ describe('content diff artifact writer', () => {
       `./.datocms-content/runtime-v${RUNTIME_VERSION}`,
     );
     expect(wrapper).to.contain(result.manifestSha256);
+    expect(wrapper).to.contain('// datocms-content-diff-binding ');
+    expect(wrapper).to.contain('"bindingVersion":1');
+    expect(wrapper).to.contain('"targetSiteId":"site-id"');
+    expect(wrapper).to.contain(
+      `"manifestBasename":"1700000000_syncContent.plan.json"`,
+    );
     expect(wrapper).to.contain(
       'module.exports = async function contentDiffMigration(client, executionContext)',
     );
@@ -267,7 +273,7 @@ describe('content diff artifact writer', () => {
     expect(error.message).to.contain(
       'fresh nested block XSPMXvayT-yMUrVxP-YoSw during current-restore',
     );
-    expect(error.message).to.contain('executable V9 content migration');
+    expect(error.message).to.contain('executable V10 content migration');
     expect(await pathExists(migrationPath)).to.equal(false);
     await expectNoStagingDirectories(directory);
   });
@@ -369,7 +375,7 @@ describe('content diff artifact writer', () => {
     );
 
     expect(error.message).to.contain(
-      'cannot be serialized as an executable V9 content migration',
+      'cannot be serialized as an executable V10 content migration',
     );
     expect(await pathExists(migrationPath)).to.equal(false);
     expect(
@@ -482,24 +488,24 @@ describe('content diff artifact writer', () => {
     await expectNoStagingDirectories(directory);
   });
 
-  it('installs runtime v15 beside an immutable legacy runtime v14', async () => {
+  it('installs runtime v16 beside an immutable legacy runtime v15', async () => {
     const directory = await makeTemporaryDirectory();
     const contentDirectory = join(directory, '.datocms-content');
-    const legacyRuntimePath = join(contentDirectory, 'runtime-v14.js');
-    const legacyBytes = 'immutable runtime v14 bytes\n';
+    const legacyRuntimePath = join(contentDirectory, 'runtime-v15.js');
+    const legacyBytes = 'immutable runtime v15 bytes\n';
     await mkdir(contentDirectory, { recursive: true });
     await writeFile(legacyRuntimePath, legacyBytes);
 
     const result = await writeContentDiffArtifacts({
       plan: makePlan(),
-      migrationFilePath: join(directory, '1700000005_runtimeV14.js'),
+      migrationFilePath: join(directory, '1700000005_runtimeV15.js'),
       format: 'js',
       bundleAssets: false,
     });
 
-    expect(RUNTIME_VERSION).to.equal('15');
+    expect(RUNTIME_VERSION).to.equal('16');
     expect(result.runtimePath).to.equal(
-      join(contentDirectory, 'runtime-v15.js'),
+      join(contentDirectory, 'runtime-v16.js'),
     );
     expect(await readFile(legacyRuntimePath, 'utf8')).to.equal(legacyBytes);
     expect(await readFile(result.runtimePath, 'utf8')).to.equal(
@@ -1373,6 +1379,7 @@ function makePlan(): ContentDiffPlan {
       capturedAt: '2026-01-01T00:00:00.000Z',
     },
     options: {
+      projectMode: 'same_project',
       includeDeletions: false,
       uploads: 'referenced',
       migrateInvalidContent: false,

@@ -1,6 +1,16 @@
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
-import { CmaClientCommand, oclif } from '@datocms/cli-utils';
+import {
+  CmaClient,
+  CmaClientCommand,
+  DatoConfigCommand,
+  type LogLevelFlagEnum,
+  type LogLevelModeEnum,
+  type ProfileConfig,
+  logLevelMap,
+  oclif,
+} from '@datocms/cli-utils';
 import { camelCase } from 'lodash';
 import { assertSupportedDatocmsCli } from '../../compat/datocms-version';
 import {
@@ -8,9 +18,25 @@ import {
   type ContentDiffMigrationSummary,
   generateContentDiffMigration,
 } from '../../content-diff';
+import {
+  type ResolveLinkedSiteToken,
+  resolveProfileApiToken,
+} from '../../utils/profile-auth';
 
 type MigrationFormat = 'js' | 'ts';
 type UploadScope = 'all' | 'referenced';
+type EnvironmentSummary = { id: string; meta: { primary: boolean } };
+type ProfileEndpoint = {
+  profileConfig: ProfileConfig;
+  rootClient: CmaClient.Client;
+  buildEnvironmentClient: (environmentId: string) => CmaClient.Client;
+};
+type DualProfileSelection = {
+  sourceProfile: string;
+  destinationProfile: string;
+  sourceApiToken?: string;
+  destinationApiToken?: string;
+};
 type PublicInvalidContentSummary = {
   partial: boolean;
   detectedRecordCount: number;
@@ -50,6 +76,22 @@ export type ContentDiffCommandResult = {
 export default class ContentDiffCommand extends CmaClientCommand {
   static generateMigration = generateContentDiffMigration;
 
+  static buildProfileClient = (config: CmaClient.ClientConfigOptions) =>
+    CmaClient.buildClient(config);
+
+  static resolveLinkedSiteToken = async (
+    command: ContentDiffCommand,
+    siteId: string,
+    organizationId?: string,
+  ): Promise<string | undefined> => {
+    const resolver = Reflect.get(command, 'resolveTokenFromSiteId') as (
+      siteId: string,
+      organizationId?: string,
+    ) => Promise<string | undefined>;
+
+    return Reflect.apply(resolver, command, [siteId, organizationId]);
+  };
+
   static description =
     'Generate a content migration by comparing two DatoCMS environments';
 
@@ -76,6 +118,12 @@ export default class ContentDiffCommand extends CmaClientCommand {
       command:
         '<%= config.bin %> <%= command.id %> "sync invalid content" --autogenerate=source:destination --migrate-invalid-content',
     },
+    {
+      description:
+        'Generate a migration across projects that share aligned public IDs',
+      command:
+        '<%= config.bin %> <%= command.id %> "sync shared content" --source-profile=source_project --destination-profile=destination_project --autogenerate=main:main',
+    },
   ];
 
   static args = {
@@ -91,6 +139,22 @@ export default class ContentDiffCommand extends CmaClientCommand {
       description:
         'Generate a migration from SOURCE to DESTINATION. When DESTINATION is omitted, the primary environment is used (for example, --autogenerate=staging or --autogenerate=staging:production)',
       required: true,
+    }),
+    'source-profile': oclif.Flags.string({
+      description:
+        'Read content from this configured profile (must be used with --destination-profile)',
+    }),
+    'destination-profile': oclif.Flags.string({
+      description:
+        'Compare and generate for this configured profile (must be used with --source-profile)',
+    }),
+    'source-api-token': oclif.Flags.string({
+      description:
+        'Specify a custom API key for --source-profile instead of its configured authentication',
+    }),
+    'destination-api-token': oclif.Flags.string({
+      description:
+        'Specify a custom API key for --destination-profile instead of its configured authentication',
     }),
     'item-types': oclif.Flags.string({
       description:
@@ -128,6 +192,19 @@ export default class ContentDiffCommand extends CmaClientCommand {
     }),
   };
 
+  protected async init(): Promise<void> {
+    if (!hasDualProfileFlag(this.argv)) {
+      await super.init();
+      return;
+    }
+
+    const initializeDatoConfig = Reflect.get(
+      DatoConfigCommand.prototype,
+      'init',
+    ) as () => Promise<void>;
+    await Reflect.apply(initializeDatoConfig, this, []);
+  }
+
   async run(): Promise<ContentDiffCommandResult> {
     assertSupportedDatocmsCli(this);
 
@@ -135,21 +212,116 @@ export default class ContentDiffCommand extends CmaClientCommand {
       args: { NAME: name },
       flags,
     } = await this.parse(ContentDiffCommand);
+    const globalFlags = flags as unknown as {
+      profile?: string;
+      'api-token'?: string;
+      'base-url'?: string;
+      'log-level'?: LogLevelFlagEnum;
+      'log-mode'?: LogLevelModeEnum;
+      'source-api-token'?: string;
+      'destination-api-token'?: string;
+      json?: boolean;
+    };
 
-    this.requireDatoProfileConfig();
+    const dualProfileSelection = this.resolveDualProfileSelection({
+      sourceProfile: flags['source-profile'],
+      destinationProfile: flags['destination-profile'],
+      sourceApiToken: globalFlags['source-api-token'],
+      destinationApiToken: globalFlags['destination-api-token'],
+      legacyProfile: globalFlags.profile,
+      legacyApiToken: globalFlags['api-token'],
+    });
 
-    const environments = await this.client.environments.list();
-    const { sourceEnvironmentId, destinationEnvironmentId } =
-      this.resolveEnvironmentIds(flags.autogenerate, environments);
+    let sourceRootClient: CmaClient.Client;
+    let destinationRootClient: CmaClient.Client;
+    let sourceEnvironmentClient: CmaClient.Client;
+    let destinationEnvironmentClient: CmaClient.Client;
+    let sourceMigrationsModelApiKey: string;
+    let destinationMigrationsModelApiKey: string;
+    let destinationMigrations: ProfileConfig['migrations'];
+    let sourceEnvironments: EnvironmentSummary[];
+    let destinationEnvironments: EnvironmentSummary[];
+    let sourceEnvironmentId: string;
+    let destinationEnvironmentId: string;
 
-    const migrations = this.datoProfileConfig!.migrations;
-    const migrationsDirectory = migrations?.directory
-      ? resolve(dirname(this.datoConfigPath), migrations.directory)
+    if (dualProfileSelection) {
+      const [sourceEndpoint, destinationEndpoint] = await Promise.all([
+        this.buildProfileEndpoint({
+          profileId: dualProfileSelection.sourceProfile,
+          explicitApiToken: dualProfileSelection.sourceApiToken,
+          endpointTokenFlag: '--source-api-token',
+          json: Boolean(globalFlags.json),
+          baseUrl: globalFlags['base-url'],
+          logLevel: globalFlags['log-level'],
+          logMode: globalFlags['log-mode'],
+        }),
+        this.buildProfileEndpoint({
+          profileId: dualProfileSelection.destinationProfile,
+          explicitApiToken: dualProfileSelection.destinationApiToken,
+          endpointTokenFlag: '--destination-api-token',
+          json: Boolean(globalFlags.json),
+          baseUrl: globalFlags['base-url'],
+          logLevel: globalFlags['log-level'],
+          logMode: globalFlags['log-mode'],
+        }),
+      ]);
+
+      sourceRootClient = sourceEndpoint.rootClient;
+      destinationRootClient = destinationEndpoint.rootClient;
+      [sourceEnvironments, destinationEnvironments] = await Promise.all([
+        sourceRootClient.environments.list(),
+        destinationRootClient.environments.list(),
+      ]);
+      ({ sourceEnvironmentId, destinationEnvironmentId } =
+        this.resolveEnvironmentIds(
+          flags.autogenerate,
+          sourceEnvironments,
+          destinationEnvironments,
+          true,
+        ));
+      sourceEnvironmentClient =
+        sourceEndpoint.buildEnvironmentClient(sourceEnvironmentId);
+      destinationEnvironmentClient = destinationEndpoint.buildEnvironmentClient(
+        destinationEnvironmentId,
+      );
+      sourceMigrationsModelApiKey =
+        sourceEndpoint.profileConfig.migrations?.modelApiKey ||
+        'schema_migration';
+      destinationMigrationsModelApiKey =
+        destinationEndpoint.profileConfig.migrations?.modelApiKey ||
+        'schema_migration';
+      destinationMigrations = destinationEndpoint.profileConfig.migrations;
+    } else {
+      this.requireDatoProfileConfig();
+      sourceRootClient = this.client;
+      destinationRootClient = this.client;
+      sourceEnvironments = await this.client.environments.list();
+      destinationEnvironments = sourceEnvironments;
+      ({ sourceEnvironmentId, destinationEnvironmentId } =
+        this.resolveEnvironmentIds(
+          flags.autogenerate,
+          sourceEnvironments,
+          destinationEnvironments,
+          false,
+        ));
+      [sourceEnvironmentClient, destinationEnvironmentClient] =
+        await Promise.all([
+          this.buildClient({ environment: sourceEnvironmentId }),
+          this.buildClient({ environment: destinationEnvironmentId }),
+        ]);
+      sourceMigrationsModelApiKey =
+        this.datoProfileConfig!.migrations?.modelApiKey || 'schema_migration';
+      destinationMigrationsModelApiKey = sourceMigrationsModelApiKey;
+      destinationMigrations = this.datoProfileConfig!.migrations;
+    }
+
+    const migrationsDirectory = destinationMigrations?.directory
+      ? resolve(dirname(this.datoConfigPath), destinationMigrations.directory)
       : resolve('./migrations');
     const format = await this.resolveMigrationFormat({
       forceJavaScript: flags.js,
       forceTypeScript: flags.ts,
-      migrationsTsconfig: migrations?.tsconfig,
+      migrationsTsconfig: destinationMigrations?.tsconfig,
     });
     const itemTypes = this.parseItemTypes(flags['item-types']);
     const migrationFilePath = join(
@@ -163,11 +335,20 @@ export default class ContentDiffCommand extends CmaClientCommand {
 
     try {
       const generated = await ContentDiffCommand.generateMigration({
-        client: this.client,
-        buildClientForEnvironment: (environment) =>
-          this.buildClient({ environment }),
-        sourceEnvironmentId,
-        destinationEnvironmentId,
+        source: {
+          rootClient: sourceRootClient,
+          environmentClient: sourceEnvironmentClient,
+          environmentId: sourceEnvironmentId,
+          migrationsModelApiKey: sourceMigrationsModelApiKey,
+          contentDiffModelApiKey: 'datocms_content_diff',
+        },
+        destination: {
+          rootClient: destinationRootClient,
+          environmentClient: destinationEnvironmentClient,
+          environmentId: destinationEnvironmentId,
+          migrationsModelApiKey: destinationMigrationsModelApiKey,
+          contentDiffModelApiKey: 'datocms_content_diff',
+        },
         migrationFilePath,
         format,
         options: {
@@ -176,8 +357,6 @@ export default class ContentDiffCommand extends CmaClientCommand {
           includeDeletions: flags['include-deletions'],
           bundleAssets: flags['bundle-assets'],
           migrateInvalidContent: flags['migrate-invalid-content'],
-          migrationsModelApiKey: migrations?.modelApiKey || 'schema_migration',
-          contentDiffModelApiKey: 'datocms_content_diff',
         },
       });
 
@@ -232,6 +411,20 @@ export default class ContentDiffCommand extends CmaClientCommand {
         error instanceof ContentDiffError &&
         error.code === 'SCHEMA_MISMATCH'
       ) {
+        if (dualProfileSelection) {
+          this.error(
+            [
+              `Incompatible schema: cannot generate content migration ${JSON.stringify(
+                name,
+              )} from "${sourceEnvironmentId}" to "${destinationEnvironmentId}" because the projects' managed schemas differ.`,
+              'No content records were read and no migration artifacts were created.',
+              'Apply the shared, checked-in schema migration history to the destination project, then regenerate the content diff.',
+              'Schema autogeneration currently compares environments within one project and cannot repair cross-project drift.',
+              '--migrate-invalid-content only handles supported invalid or historical-null content; it does not bypass schema compatibility.',
+            ].join('\n'),
+          );
+        }
+
         const schemaReadyEnvironmentId = `${destinationEnvironmentId}-schema-ready`;
 
         this.error(
@@ -288,9 +481,174 @@ export default class ContentDiffCommand extends CmaClientCommand {
     return itemTypes;
   }
 
+  private resolveDualProfileSelection({
+    sourceProfile,
+    destinationProfile,
+    sourceApiToken,
+    destinationApiToken,
+    legacyProfile,
+    legacyApiToken,
+  }: {
+    sourceProfile?: string;
+    destinationProfile?: string;
+    sourceApiToken?: string;
+    destinationApiToken?: string;
+    legacyProfile?: string;
+    legacyApiToken?: string;
+  }): DualProfileSelection | undefined {
+    const hasDualProfileOption = Boolean(
+      sourceProfile ||
+        destinationProfile ||
+        sourceApiToken ||
+        destinationApiToken,
+    );
+
+    if (!hasDualProfileOption) {
+      return undefined;
+    }
+
+    if (!sourceProfile || !destinationProfile) {
+      this.error(
+        '--source-profile and --destination-profile must be provided together',
+      );
+    }
+
+    if (legacyProfile || legacyApiToken) {
+      this.error(
+        '--profile and --api-token cannot be combined with --source-profile, --destination-profile, --source-api-token, or --destination-api-token',
+      );
+    }
+
+    return {
+      sourceProfile,
+      destinationProfile,
+      ...(sourceApiToken ? { sourceApiToken } : {}),
+      ...(destinationApiToken ? { destinationApiToken } : {}),
+    };
+  }
+
+  private async buildProfileEndpoint({
+    profileId,
+    explicitApiToken,
+    endpointTokenFlag,
+    json,
+    baseUrl,
+    logLevel,
+    logMode,
+  }: {
+    profileId: string;
+    explicitApiToken?: string;
+    endpointTokenFlag: '--source-api-token' | '--destination-api-token';
+    json: boolean;
+    baseUrl?: string;
+    logLevel?: LogLevelFlagEnum;
+    logMode?: LogLevelModeEnum;
+  }): Promise<ProfileEndpoint> {
+    this.requireDatoConfig();
+
+    const profileConfig = this.datoConfig!.profiles[profileId];
+
+    if (!profileConfig) {
+      this.error(
+        `Requested profile "${profileId}" is not defined in config file "${this.datoConfigRelativePath}"`,
+        {
+          suggestions: [
+            `Configure it with "${this.config.bin} profile:set ${profileId}"`,
+          ],
+        },
+      );
+    }
+
+    const resolveLinkedSiteToken: ResolveLinkedSiteToken = (
+      siteId,
+      organizationId,
+    ) =>
+      ContentDiffCommand.resolveLinkedSiteToken(this, siteId, organizationId);
+    const { apiToken, environmentName } = await resolveProfileApiToken({
+      explicitApiToken,
+      profileConfig,
+      profileId,
+      resolveLinkedSiteToken,
+    });
+
+    if (!apiToken) {
+      this.error(
+        `Cannot find an API token for profile "${profileId}" to call DatoCMS!`,
+        {
+          suggestions: [
+            `Provide ${endpointTokenFlag}`,
+            `Link profile "${profileId}" to a project with "${this.config.bin} link --profile=${profileId}" (requires "${this.config.bin} login" first)`,
+            `Set the ${environmentName} environment variable (we look inside .env.local and .env too)`,
+          ],
+        },
+      );
+    }
+
+    const profileLogLevel = logLevel || profileConfig.logLevel;
+    const profileLogMode = logMode || profileConfig.logMode;
+    const clientOptions: CmaClient.ClientConfigOptions = {
+      apiToken,
+      ...(baseUrl || profileConfig.baseUrl
+        ? { baseUrl: baseUrl || profileConfig.baseUrl }
+        : {}),
+      logLevel:
+        json || !profileLogLevel
+          ? CmaClient.LogLevel.NONE
+          : logLevelMap[profileLogLevel],
+      logFn: this.buildApiLogFunction(profileLogMode, [apiToken]),
+    };
+
+    return {
+      profileConfig,
+      rootClient: ContentDiffCommand.buildProfileClient(clientOptions),
+      buildEnvironmentClient: (environmentId) =>
+        ContentDiffCommand.buildProfileClient({
+          ...clientOptions,
+          environment: environmentId,
+        }),
+    };
+  }
+
+  private buildApiLogFunction(
+    logMode?: LogLevelModeEnum,
+    secrets: readonly string[] = [],
+  ): (message: string) => void {
+    return (rawMessage) => {
+      const message = secrets.reduce(
+        (redacted, secret) =>
+          secret ? redacted.split(secret).join('[REDACTED]') : redacted,
+        rawMessage,
+      );
+      if (logMode === 'directory') {
+        const match = message.match(/^\[([^\]]+)\]/);
+
+        if (!match) {
+          return;
+        }
+
+        const logDirectory = './api-calls';
+        if (!existsSync(logDirectory)) {
+          mkdirSync(logDirectory, { recursive: true });
+        }
+
+        appendFileSync(join(logDirectory, `${match[1]}.log`), `${message}\n`, {
+          encoding: 'utf8',
+        });
+      } else if (logMode === 'file') {
+        appendFileSync('./api-calls.log', `${message}\n`, {
+          encoding: 'utf8',
+        });
+      } else {
+        this.log(message);
+      }
+    };
+  }
+
   private resolveEnvironmentIds(
     rawAutogenerate: string,
-    environments: Array<{ id: string; meta: { primary: boolean } }>,
+    sourceEnvironments: EnvironmentSummary[],
+    destinationEnvironments: EnvironmentSummary[],
+    allowMatchingEnvironmentIds: boolean,
   ): {
     sourceEnvironmentId: string;
     destinationEnvironmentId: string;
@@ -304,7 +662,7 @@ export default class ContentDiffCommand extends CmaClientCommand {
     }
 
     const sourceEnvironmentId = parts[0];
-    const primaryEnvironment = environments.find(
+    const primaryEnvironment = destinationEnvironments.find(
       (environment) => environment.meta.primary,
     );
     const destinationEnvironmentId = parts[1] || primaryEnvironment?.id;
@@ -314,7 +672,7 @@ export default class ContentDiffCommand extends CmaClientCommand {
     }
 
     if (
-      !environments.some(
+      !sourceEnvironments.some(
         (environment) => environment.id === sourceEnvironmentId,
       )
     ) {
@@ -322,14 +680,17 @@ export default class ContentDiffCommand extends CmaClientCommand {
     }
 
     if (
-      !environments.some(
+      !destinationEnvironments.some(
         (environment) => environment.id === destinationEnvironmentId,
       )
     ) {
       this.error(`Environment "${destinationEnvironmentId}" does not exist`);
     }
 
-    if (sourceEnvironmentId === destinationEnvironmentId) {
+    if (
+      !allowMatchingEnvironmentIds &&
+      sourceEnvironmentId === destinationEnvironmentId
+    ) {
       this.error('Source and destination environments must be different');
     }
 
@@ -650,4 +1011,15 @@ async function findNearestFile(
 
     return findNearestFile(fileName, parentDirectoryPath);
   }
+}
+
+function hasDualProfileFlag(argv: readonly string[]): boolean {
+  return argv.some((argument) =>
+    [
+      '--source-profile',
+      '--destination-profile',
+      '--source-api-token',
+      '--destination-api-token',
+    ].some((flag) => argument === flag || argument.startsWith(`${flag}=`)),
+  );
 }

@@ -17,5 +17,5 @@ export declare function migrationsTrackingModelId(schema: SchemaSnapshot, migrat
 export declare function computeSchemaDigest(schema: SchemaSnapshot): string;
 export declare function schemaSemanticState(schema: SchemaSnapshot): JsonObject;
 export declare function assertSchemasCompatible(source: SchemaSnapshot, target: SchemaSnapshot): void;
-export declare function assertSameProject(source: SchemaSnapshot, target: SchemaSnapshot): void;
-export declare function schemaMismatch(source: Pick<SchemaSnapshot, 'environmentId'>, target: Pick<SchemaSnapshot, 'environmentId'>): ContentDiffError;
+export declare function assertDistinctEndpoints(source: SchemaSnapshot, target: SchemaSnapshot): void;
+export declare function schemaMismatch(source: Pick<SchemaSnapshot, 'siteId' | 'environmentId'>, target: Pick<SchemaSnapshot, 'siteId' | 'environmentId'>): ContentDiffError;

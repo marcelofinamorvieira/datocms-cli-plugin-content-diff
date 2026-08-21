@@ -43,11 +43,18 @@ export type ContentDiffMigrationSummary = {
         reason: string;
     }>;
 };
+export interface GenerateContentDiffMigrationEndpoint {
+    /** Project-scoped client used only for project/environment permission proofs. */
+    rootClient: CmaClient.Client;
+    /** Client already scoped to this endpoint's environment. */
+    environmentClient: CmaClient.Client;
+    environmentId: string;
+    migrationsModelApiKey?: string;
+    contentDiffModelApiKey?: string;
+}
 export interface GenerateContentDiffMigrationInput {
-    client: CmaClient.Client;
-    buildClientForEnvironment: (environmentId: string) => Promise<CmaClient.Client>;
-    sourceEnvironmentId: string;
-    destinationEnvironmentId: string;
+    source: GenerateContentDiffMigrationEndpoint;
+    destination: GenerateContentDiffMigrationEndpoint;
     migrationFilePath: string;
     format: 'js' | 'ts';
     options: {
@@ -56,8 +63,6 @@ export interface GenerateContentDiffMigrationInput {
         includeDeletions: boolean;
         bundleAssets: boolean;
         migrateInvalidContent: boolean;
-        migrationsModelApiKey?: string;
-        contentDiffModelApiKey?: string;
     };
 }
 export interface GenerateContentDiffMigrationResult {
@@ -70,7 +75,7 @@ export interface GenerateContentDiffMigrationResult {
     assetsPath?: string;
     summary: ContentDiffMigrationSummary;
 }
-export declare function generateContentDiffMigration({ client, buildClientForEnvironment, sourceEnvironmentId, destinationEnvironmentId, migrationFilePath, format, options, }: GenerateContentDiffMigrationInput): Promise<GenerateContentDiffMigrationResult>;
+export declare function generateContentDiffMigration({ source, destination, migrationFilePath, format, options, }: GenerateContentDiffMigrationInput): Promise<GenerateContentDiffMigrationResult>;
 export declare function assertNoLegacyDestinationIdCollisions(collisions: NonNullable<BuildContentDiffPlanOptions['entityIdCollisions']>): void;
 /**
  * Runs private, non-mutating validation calls only for source slices whose CMA

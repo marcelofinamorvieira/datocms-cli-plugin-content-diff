@@ -33,6 +33,11 @@ export default class Command extends CmaClientCommand {
         runMigrationScripts: string[];
     }>;
     private runMigrationScript;
+    private findMigrationModelReadOnly;
+    private validatePendingContentDiffBindings;
+    private assertExactContentDiffBinding;
+    private assertBoundManifest;
+    private bindingError;
     private migrationScriptsToRun;
     private forkEnvironment;
     private fetchAlreadyRunMigrationScripts;

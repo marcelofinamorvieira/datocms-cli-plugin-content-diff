@@ -181,10 +181,10 @@ export const independentRequiredShellComponentsScenario: RealCmaScenario<
 
   async verifyGeneratedPlan({ seed, expected, planFilePath }) {
     const envelope = object(JSON.parse(await readFile(planFilePath, 'utf8')));
-    assert.equal(envelope.formatVersion, 9);
-    assert.equal(envelope.runtimeVersion, '15');
+    assert.equal(envelope.formatVersion, 10);
+    assert.equal(envelope.runtimeVersion, '16');
     const plan = object(envelope.plan);
-    assert.equal(plan.formatVersion, 9);
+    assert.equal(plan.formatVersion, 10);
     const execution = object(plan.execution);
     const expectedComponents = expected.components
       .map((component) => [...component].sort())
